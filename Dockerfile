@@ -5,7 +5,7 @@ FROM rockylinux:8
 #
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.0.0"
+ARG VER="1.0.1"
 ARG PKG="nettest"
 ARG UID="0"
 
@@ -34,11 +34,14 @@ RUN yum -y install \
         nc \
         net-tools \
         nmap \
+        openldap-clients \
         telnet \
         wget
+
+COPY entrypoint /
 
 #
 # Final parameters
 #
 WORKDIR     /
-ENTRYPOINT  [ "/bin/bash" ]
+ENTRYPOINT  [ "/entrypoint" ]
