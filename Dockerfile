@@ -36,6 +36,7 @@ RUN yum -y install \
         nmap \
         openldap-clients \
         telnet \
+        vim \
         wget
 
 COPY entrypoint /
