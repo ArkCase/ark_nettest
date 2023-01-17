@@ -41,6 +41,8 @@ RUN yum -y install epel-release && \
         wget && \
     yum -y clean all
 
+COPY nettest.yaml /
+
 #
 # Final parameters
 #
