@@ -5,7 +5,7 @@ FROM rockylinux:8
 #
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.0.1"
+ARG VER="1.0.2"
 ARG PKG="nettest"
 ARG UID="0"
 
@@ -21,28 +21,29 @@ LABEL IMAGE_SOURCE="https://github.com/ArkCase/ark_nettest"
 #
 # Full update
 #
+COPY kubernetes.repo /etc/yum.repos.d/
 RUN yum -y install epel-release && \
     yum -y update && \
     yum -y install yum-utils which && \
     yum-config-manager \
         --enable devel \
-        --enable powertools
-
-RUN yum -y install \
+        --enable powertools && \
+    yum -y install \
         bind-utils \
         jq \
+        kubectl \
         nc \
         net-tools \
         nmap \
         openldap-clients \
         telnet \
         vim \
-        wget
-
-COPY entrypoint /
+        wget && \
+    yum -y clean all
 
 #
 # Final parameters
 #
 WORKDIR     /
-ENTRYPOINT  [ "/entrypoint" ]
+USER        "${UID}"
+ENTRYPOINT  [ "sleep", "infinity" ]
