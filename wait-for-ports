@@ -10,17 +10,32 @@ import time
 import traceback
 import yaml
 
-DEFAULT_DEPENDENCY_MODE = "all"
-DEFAULT_PORT_MODE = "all"
-DEFAULT_INITIAL_DELAY = 0
-DEFAULT_DELAY = 5
+KEY_MODE = "mode"
+KEY_INITIAL_DELAY = "initial_delay"
+KEY_DELAY = "delay"
+KEY_TIMEOUT = "timeout"
+KEY_ATTEMPTS = "attempts"
+
+MODE_ALL = "all"
+MODE_ANY = "any"
+
+DEFAULT_TEMPLATE = {
+	KEY_MODE : MODE_ALL,
+	KEY_INITIAL_DELAY : 0,
+	KEY_DELAY : 5,
+	KEY_TIMEOUT : 15,
+	KEY_ATTEMPTS : 3
+}
+
+DEFAULT_DEPENDENCY_MODE = MODE_ALL
 MIN_DELAY = 1
-DEFAULT_TIMEOUT = 15
-DEFAULT_ATTEMPTS = 3
 MIN_ATTEMPTS = 1
 
 def format_exception(e):
 	return "".join(traceback.format_exception(e))
+
+def get_templated_value(m, k):
+	return m.get(k, DEFAULT_TEMPLATE.get(k, None))
 
 class Lock:
 	def __init__(self, rwl, myEnter, myExit):
@@ -171,24 +186,24 @@ class Dependency:
 			logging.info(f"ERROR: hostname [{host}] could not be resolved: {e}")
 			os._exit(1)
 
-		self.mode = str(obj.get("mode", DEFAULT_PORT_MODE)).lower()
-		if (self.mode != "all") and (self.mode != "any"):
+		self.mode = str(get_templated_value(obj, KEY_MODE)).lower()
+		if (self.mode != MODE_ALL) and (self.mode != MODE_ANY):
 			logging.info(f"Mode for host [{self.host}] value [{obj['mode']}] is not valid - must be either 'all' or 'any' (case-insensitive)")
 			os._exit(1)
 
-		initial_delay = int(obj.get("initial_delay", DEFAULT_INITIAL_DELAY))
+		initial_delay = int(get_templated_value(obj, KEY_INITIAL_DELAY))
 		if initial_delay < 0:
 			initial_delay = 0
 
-		delay = int(obj.get("delay", DEFAULT_DELAY))
+		delay = int(get_templated_value(obj, KEY_DELAY))
 		if delay < MIN_DELAY:
 			delay = MIN_DELAY
 
-		timeout = int(obj.get("timeout", DEFAULT_TIMEOUT))
+		timeout = int(get_templated_value(obj, KEY_TIMEOUT))
 		if timeout < 0:
 			timeout = DEFAULT_TIMEOUT
 
-		attempts = int(obj.get("attempts", DEFAULT_ATTEMPTS))
+		attempts = int(get_templated_value(obj, KEY_ATTEMPTS))
 		if attempts < 1:
 			attempts = MIN_ATTEMPTS
 
@@ -247,7 +262,7 @@ class Dependency:
 		# or all have succeeded, then we fire off the
 		# global dependency success handler, and stop
 		# all other port threads
-		if (self.mode == "any") or (remaining <= 0):
+		if (self.mode == MODE_ANY) or (remaining <= 0):
 			self.__set_result_and_cancel_futures(1)
 
 	def __port_failure(self, port, exceptions):
@@ -258,7 +273,7 @@ class Dependency:
 		# or all have failed, then we fire off the
 		# global dependency failure handler, and stop
 		# all other port threads
-		if (self.mode == "all") or (remaining <= 0):
+		if (self.mode == MODE_ALL) or (remaining <= 0):
 			self.__set_result_and_cancel_futures(2)
 
 	def get_port_count(self):
@@ -277,14 +292,14 @@ class Dependency:
 def dependency_success(name):
 	# Subtract one from the global dependency counter
 	remaining = total_dependencies.dec()
-	if (dependency_mode == "all") and (remaining > 0):
+	if (dependency_mode == MODE_ALL) and (remaining > 0):
 		# We must wait for all remaining dependencies to succeed, so we do nothing
 		logging.info(f"There are still {remaining} unresolved dependencies...")
 		return False
 
 	# We can exit now if this is the last dependency to succeed,
 	# or if we were only waiting for the first dependency to succeed
-	if dependency_mode == "all":
+	if dependency_mode == MODE_ALL:
 		logging.info("All dependencies have succeeded. Exiting with a success status.")
 	else:
 		logging.info("One dependency has succeeded, and only one was required to succeed. Exiting with a success status")
@@ -293,14 +308,14 @@ def dependency_success(name):
 def dependency_failure(name):
 	# Subtract one from the global dependency counter
 	remaining = total_dependencies.dec()
-	if (dependency_mode == "any") and (remaining > 0):
+	if (dependency_mode == MODE_ANY) and (remaining > 0):
 		# We must wait for all remaining dependencies to fail, so we do nothing
 		logging.info(f"There are still {remaining} unresolved dependencies...")
 		return False
 
 	# We can exit now if this is the last dependency to fail,
 	# or if we were only waiting for the first dependency to fail
-	if dependency_mode == "all":
+	if dependency_mode == MODE_ALL:
 		logging.info("A dependency has failed, but all were required to succeed. Exiting with an error status")
 	else:
 		logging.info("All dependencies have failed where at least one was required to succeed. Exiting with an error status")
@@ -340,19 +355,34 @@ except Exception as e:
 		logging.error(e)
 		sys.exit(1)
 
-# TODO: parse out the "all" vs. "any"
+# TODO: parse out the mode
 dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
-if (dependency_mode != "all") and (dependency_mode != "any"):
+if (dependency_mode != MODE_ALL) and (dependency_mode != MODE_ANY):
 	logging.info(f"The dependency mode value [{dependency_mode}] is not valid - must be either 'all' or 'any' (case-insensitive)")
 	sys.exit(1)
 
 try:
 	hosts = data["hosts"]
 except KeyError:
-	logging.info(f"No hosts found in the JSON file at [{sys.argv[1]}]")
+	logging.info(f"No hosts found in the configuration file at [{source_file}]")
 	sys.exit(0)
 
 logging.info(f"Dependency mode: {dependency_mode} required")
+
+#
+# Make sure the template values are in range
+#
+dependency_template = data.get("template", {})
+for k in DEFAULT_TEMPLATE:
+	if k in dependency_template:
+		v = dependency_template[k]
+		t = type(DEFAULT_TEMPLATE[k])
+		if type(v) != t:
+			try:
+				DEFAULT_TEMPLATE[k] = t(v)
+			except:
+				logging.error(f"The dependency template value [{k}] of [{v}] can't be cast to type {t}")
+				sys.exit(1)
 
 total_threads = 0
 dependencies = {}
