@@ -3,11 +3,12 @@ import concurrent.futures
 import json
 import logging
 import os
+import socket
+import sys
 import threading
 import time
 import traceback
-import socket
-import sys
+import yaml
 
 DEFAULT_DEPENDENCY_MODE = "all"
 DEFAULT_PORT_MODE = "all"
@@ -17,6 +18,9 @@ MIN_DELAY = 1
 DEFAULT_TIMEOUT = 15
 DEFAULT_ATTEMPTS = 3
 MIN_ATTEMPTS = 1
+
+def format_exception(e):
+	return "".join(traceback.format_exception(e))
 
 class Lock:
 	def __init__(self, rwl, myEnter, myExit):
@@ -129,7 +133,7 @@ class DependencyPort:
 		# Apply any initial delay
 		logging.info(f"\tLaunching the prober thread for {self.host}:{self.port}...")
 		if (self.initial_delay > 0):
-			logging.info(f"\t\tApplying the initial delay of {self.initial_delay}s ({attempt + 1}/{self.attempts})...")
+			logging.info(f"\t\tApplying the initial delay of {self.initial_delay}s...")
 			time.sleep(self.initial_delay)
 
 		exceptions = []
@@ -147,7 +151,7 @@ class DependencyPort:
 				exceptions.append(e)
 			except Exception as e:
 				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
-				logging.error("".join(traceback.format_exception(e)))
+				logging.error(format_exception(e))
 				exceptions.append(e)
 
 			if (self.delay > 0) and ((attempt + 1) < self.attempts):
@@ -247,7 +251,8 @@ class Dependency:
 			self.__set_result_and_cancel_futures(1)
 
 	def __port_failure(self, port, exceptions):
-		logging.info(f"Failed to probe [{self.host}:{port}]: {exceptions}")
+		exceptions = "\n\t".join([str(i) for i in exceptions])
+		logging.info(f"Probes to [{self.host}:{port}] failed:\n\t{exceptions}")
 		remaining = self.active_ports.dec()
 		# If we're just waiting for the first failure,
 		# or all have failed, then we fire off the
@@ -302,18 +307,38 @@ def dependency_failure(name):
 	os._exit(1)
 
 if len(sys.argv) != 2:
-	print(f"usage: {sys.argv[0]} dependency-json-file")
+	print(f"usage: {sys.argv[0]} dependency-file")
 	sys.exit(1)
 
 # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logging.basicConfig(level=logging.DEBUG, format = '%(asctime)s - %(threadName)-10s - %(levelname)s - %(message)s')
 
+# First try to load as a YAML file ... if that fails, try with JSON ...
+
+#
+# Import the YAML library
+#
+from yaml import load, dump
 try:
-	with open(sys.argv[1], "r") as f:
-		data = json.load(f)
+    from yaml import CLoader as Loader, CDumper as Dumper
+except ImportError:
+    from yaml import Loader, Dumper
+
+source_file = sys.argv[1]
+try:
+	with open(source_file, "r") as f:
+		data = load(f, Loader=Loader)
+		if data is None:
+			raise Exception("Data is not in YAML format")
 except Exception as e:
-	logging.error(e)
-	sys.exit(1)
+	# Yaml parse failed ... try as JSON
+	logging.warning(f"File [{source_file}] was not in YAML format, trying JSON")
+	try:
+		with open(source_file, "r") as f:
+			data = json.load(f)
+	except Exception as e:
+		logging.error(e)
+		sys.exit(1)
 
 # TODO: parse out the "all" vs. "any"
 dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
@@ -350,7 +375,7 @@ try:
 			try:
 				f.result()
 			except Exception as e:
-				logging.error(traceback.format_exception(e))
+				logging.error(format_exception(e))
 				# We don't care...
 				pass
 		sys.exit(0)
