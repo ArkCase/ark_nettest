@@ -10,6 +10,8 @@ import time
 import traceback
 import yaml
 
+ENV_INIT_DEPENDENCIES = "INIT_DEPENDENCIES"
+
 KEY_MODE = "mode"
 KEY_DEPENDENCIES = "dependencies"
 KEY_INITIAL_DELAY = "initialDelay"
@@ -326,27 +328,38 @@ def dependency_failure(name):
 	os._exit(1)
 
 if len(sys.argv) != 2:
-	print(f"usage: {sys.argv[0]} dependency-file")
-	sys.exit(1)
+	# If no parameter is given, use an environment variable
+	if ENV_INIT_DEPENDENCIES in os.environ:
+		source_file = os.environ[ENV_INIT_DEPENDENCIES]
+		# Check if this points to a file ...
+		source_file_is_file = (os.path.exists(source_file) and os.path.isfile(source_file))
+	else:
+		print(f"usage: {sys.argv[0]} [dependency-file]")
+		print("")
+		print(f"\tIf the file is not given, its path will be read from the environment variable {ENV_INIT_DEPENDENCIES},")
+		print(f"\twhich may also contain the configuration data directly, for convenience in containerized")
+		print(f"\tenvironments and the like.")
+		sys.exit(1)
+else:
+	# If the parameter is given, use it
+	source_file = sys.argv[1]
+	source_file_is_file = True
 
 # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logging.basicConfig(level=logging.DEBUG, format = '%(asctime)s - %(threadName)-10s - %(levelname)s - %(message)s')
 
 # First try to load as a YAML file ... if that fails, try with JSON ...
 
-#
-# Import the YAML library
-#
-from yaml import load, dump
 try:
-    from yaml import CLoader as Loader, CDumper as Dumper
-except ImportError:
-    from yaml import Loader, Dumper
-
-source_file = sys.argv[1]
-try:
-	with open(source_file, "r") as f:
-		data = load(f, Loader=Loader)
+	if source_file_is_file:
+		logging.info(f"Loading the configuration from the file [{source_file}]...")
+		with open(source_file, "r") as f:
+			data = yaml.load(f, Loader=yaml.SafeLoader)
+			if data is None:
+				raise Exception("Data is not in YAML format")
+	else:
+		logging.info(f"Parsing the configruation from the string: [\n{source_file}\n]...")
+		data = yaml.safe_load(source_file)
 		if data is None:
 			raise Exception("Data is not in YAML format")
 except Exception as e:
