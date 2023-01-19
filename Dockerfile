@@ -36,16 +36,20 @@ RUN yum -y install epel-release && \
         net-tools \
         nmap \
         openldap-clients \
+        python39 \
+        python39-pyyaml \
         telnet \
         vim \
         wget && \
+    update-alternatives --set python /usr/bin/python3.9 && \
     yum -y clean all
 
 COPY nettest.yaml /
+COPY wait-for-ports /
 
 #
 # Final parameters
 #
 WORKDIR     /
 USER        "${UID}"
-ENTRYPOINT  [ "sleep", "infinity" ]
+ENTRYPOINT  [ "/bin/bash" ]
