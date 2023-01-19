@@ -11,6 +11,7 @@ import traceback
 import yaml
 
 KEY_MODE = "mode"
+KEY_DEPENDENCIES = "dependencies"
 KEY_INITIAL_DELAY = "initialDelay"
 KEY_DELAY = "delay"
 KEY_TIMEOUT = "timeout"
@@ -355,16 +356,15 @@ except Exception as e:
 		logging.error(e)
 		sys.exit(1)
 
-# TODO: parse out the mode
 dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
 if (dependency_mode != MODE_ALL) and (dependency_mode != MODE_ANY):
 	logging.info(f"The dependency mode value [{dependency_mode}] is not valid - must be either 'all' or 'any' (case-insensitive)")
 	sys.exit(1)
 
 try:
-	hosts = data["hosts"]
+	hosts = data[KEY_DEPENDENCIES]
 except KeyError:
-	logging.info(f"No hosts found in the configuration file at [{source_file}]")
+	logging.info(f"No dependencies found in the configuration file at [{source_file}]")
 	sys.exit(0)
 
 logging.info(f"Dependency mode: {dependency_mode} required")

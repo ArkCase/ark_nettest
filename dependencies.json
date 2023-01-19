@@ -1,5 +1,5 @@
 {
-  "hosts": {
+  "dependencies": {
     "tvserver": {
       "attempts": 3,
       "initialDelay": 3,

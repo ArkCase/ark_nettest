@@ -1,0 +1,41 @@
+
+mode: all
+
+template:
+  attempts: 3
+  initialDelay: 3
+  delay: 1
+  mode: "any"
+  timeout: 5
+
+dependencies:
+
+  tvserver:
+    attempts: 3
+    initialDelay: 3
+    delay: 1
+    mode: "any"
+    ports:
+      - 9981
+      - 9982
+    timeout: 5
+
+  localhost:
+    attempts: 3
+    initialDelay: 5
+    delay: 3
+    mode: all
+    ports:
+      - 61616
+    timeout: 5
+
+  dns1:
+    attempts: 3
+    initialDelay: 7
+    delay: 2
+    mode: all
+    ports:
+      - domain
+      - 22
+      - http
+    timeout: 5
