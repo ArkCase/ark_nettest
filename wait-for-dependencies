@@ -1,0 +1,359 @@
+#!/usr/bin/python
+import concurrent.futures
+import json
+import logging
+import os
+import threading
+import time
+import traceback
+import socket
+import sys
+
+DEFAULT_DEPENDENCY_MODE = "all"
+DEFAULT_PORT_MODE = "all"
+DEFAULT_INITIAL_DELAY = 0
+DEFAULT_DELAY = 5
+MIN_DELAY = 1
+DEFAULT_TIMEOUT = 15
+DEFAULT_ATTEMPTS = 3
+MIN_ATTEMPTS = 1
+
+class Lock:
+	def __init__(self, rwl, myEnter, myExit):
+		self.rwl = rwl
+		self.enter = myEnter
+		self.exit = myExit
+
+	def __enter__(self):
+		return self.enter()
+
+	def __exit__(self, exc_type, exc_value, traceback):
+		return self.exit()
+
+	def lock(self):
+		return self.enter()
+
+	def unlock(self):
+		return self.__exit__(None, None, None)
+
+class ReadWriteLock:
+	def __init__(self):
+		self.__read_condition = threading.Condition()
+		self.__reader_count = 0
+		self.__read_lock = Lock(self, self.__acquire_read, self.__release_read)
+		self.__write_lock = Lock(self, self.__acquire_write, self.__release_write)
+
+	def readLock(self):
+		return self.__read_lock
+
+	def writeLock(self):
+		return self.__write_lock
+
+	def __acquire_read(self):
+		self.__read_condition.acquire()
+		try:
+			self.__reader_count += 1
+		finally:
+			self.__read_condition.release()
+
+	def __release_read(self):
+		self.__read_condition.acquire()
+		try:
+			self.__reader_count -= 1
+			if not self.__reader_count:
+				self.__read_condition.notify_all()
+		finally:
+			self.__read_condition.release()
+
+	def __acquire_write(self):
+		self.__read_condition.acquire()
+		while self.__reader_count > 0:
+			self.__read_condition.wait()
+
+	def __release_write(self):
+		self.__read_condition.release()
+
+class ThreadedCounter:
+	def __init__(self, initialCount = 0):
+		self.counter = int(initialCount)
+		self.lock = ReadWriteLock()
+
+	def add(self, count):
+		count = int(count)
+		with self.lock.writeLock():
+			self.counter += count
+			return self.counter
+
+	def inc(self):
+		return self.add(1)
+
+	def sub(self, count):
+		count = int(count)
+		return self.add(-count)
+
+	def dec(self):
+		return self.add(-1)
+
+	def get(self):
+		with self.lock.readLock():
+			return self.counter
+
+	def set(self, value):
+		value = int(value)
+		with self.lock.writeLock():
+			self.counter = value
+			return self.counter
+
+	def setIf(self, expected, value):
+		expected = int(expected)
+		value = int(value)
+
+		with self.lock.writeLock():
+			if self.counter == expected:
+				self.counter = value
+				return True
+			return False
+
+class DependencyPort:
+	def __init__(self, host, port, initial_delay, delay, timeout, attempts, success, failure):
+		self.host = host
+		self.port = port
+		self.initial_delay = initial_delay
+		self.delay = delay
+		self.timeout = timeout
+		self.attempts = attempts
+		self.success = success
+		self.failure = failure
+
+	def check(self):
+		# Apply any initial delay
+		logging.info(f"\tLaunching the prober thread for {self.host}:{self.port}...")
+		if (self.initial_delay > 0):
+			logging.info(f"\t\tApplying the initial delay of {self.initial_delay}s ({attempt + 1}/{self.attempts})...")
+			time.sleep(self.initial_delay)
+
+		exceptions = []
+		for attempt in range(self.attempts):
+			try:
+				logging.info(f"\t\tProbing {self.host}:{self.port} ({attempt + 1}/{self.attempts})...")
+				with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+					if self.timeout:
+						s.settimeout(self.timeout)
+					s.connect((self.host, self.port))
+					self.success(self.port)
+					return True
+			except (TimeoutError, ConnectionRefusedError) as e:
+				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
+				exceptions.append(e)
+			except Exception as e:
+				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
+				logging.error("".join(traceback.format_exception(e)))
+				exceptions.append(e)
+
+			if (self.delay > 0) and ((attempt + 1) < self.attempts):
+				logging.info(f"\t\tApplying a delay of {self.delay}s before the next attempt ({attempt + 2}/{self.attempts})...")
+				time.sleep(self.delay)
+
+		self.failure(self.port, exceptions)
+		return False
+
+class Dependency:
+	def __init__(self, host, obj):
+		self.host = host
+		self.lock = threading.RLock()
+		try:
+			self.address = socket.gethostbyname(self.host)
+		except Exception as e:
+			logging.info(f"ERROR: hostname [{host}] could not be resolved: {e}")
+			os._exit(1)
+
+		self.mode = str(obj.get("mode", DEFAULT_PORT_MODE)).lower()
+		if (self.mode != "all") and (self.mode != "any"):
+			logging.info(f"Mode for host [{self.host}] value [{obj['mode']}] is not valid - must be either 'all' or 'any' (case-insensitive)")
+			os._exit(1)
+
+		initial_delay = int(obj.get("initial_delay", DEFAULT_INITIAL_DELAY))
+		if initial_delay < 0:
+			initial_delay = 0
+
+		delay = int(obj.get("delay", DEFAULT_DELAY))
+		if delay < MIN_DELAY:
+			delay = MIN_DELAY
+
+		timeout = int(obj.get("timeout", DEFAULT_TIMEOUT))
+		if timeout < 0:
+			timeout = DEFAULT_TIMEOUT
+
+		attempts = int(obj.get("attempts", DEFAULT_ATTEMPTS))
+		if attempts < 1:
+			attempts = MIN_ATTEMPTS
+
+		self.active_ports = ThreadedCounter(0)
+		self.final_result = ThreadedCounter(0)
+		self.ports = {}
+		self.port_futures = {}
+		for port in obj["ports"]:
+			# If port is a string, it must be a service from /etc/services, or it's an error
+			try:
+				# Try to see if it's a port number
+				p = int(port)
+			except ValueError:
+				# It's a port name ... so resolve it as such
+				try:
+					p = socket.getservbyname(port)
+				except:
+					logging.info(f"Port name [{port}] (from host {self.host}) could not be resolved from /etc/services")
+					os._exit(1)
+
+			if (p < 1) or (p > 65535):
+				logging.info(f"Port [{port}] must be between 1 and 65535")
+
+			self.ports[p] = DependencyPort(self.host, p, initial_delay, delay, timeout, attempts, self.__port_success, self.__port_failure)
+
+	def __set_result_and_cancel_futures(self, result):
+		if self.final_result.setIf(0, result):
+			if result == 1:
+				label = "SUCCESS"
+			else:
+				label = "FAILURE"
+			logging.info(f"Dependency [{self.host}] end result: {label}")
+			for p, f in self.port_futures.items():
+				if f.done:
+					continue
+				logging.info(f"\tCanceling the future for [{self.host}:{p}]")
+				try:
+					f.cancel()
+				except:
+					# We don't care...
+					pass
+
+			# Clear the remaining counter
+			self.active_ports.set(0)
+
+			# Signal upwards
+			if result == 1:
+				dependency_success(self.host)
+			else:
+				dependency_failure(self.host)
+
+	def __port_success(self, port):
+		logging.info(f"Successfully probed [{self.host}:{port}]")
+		remaining = self.active_ports.dec()
+		# If we're just waiting for the first success,
+		# or all have succeeded, then we fire off the
+		# global dependency success handler, and stop
+		# all other port threads
+		if (self.mode == "any") or (remaining <= 0):
+			self.__set_result_and_cancel_futures(1)
+
+	def __port_failure(self, port, exceptions):
+		logging.info(f"Failed to probe [{self.host}:{port}]: {exceptions}")
+		remaining = self.active_ports.dec()
+		# If we're just waiting for the first failure,
+		# or all have failed, then we fire off the
+		# global dependency failure handler, and stop
+		# all other port threads
+		if (self.mode == "all") or (remaining <= 0):
+			self.__set_result_and_cancel_futures(2)
+
+	def get_port_count(self):
+		return len(self.ports)
+
+	def start(self, executor):
+		# Start the pollers for all the internal ports
+		self.active_ports.set(len(self.ports))
+		logging.info(f"\tStarting the probes for [{self.host}] (required: {self.mode})")
+		for p, P in self.ports.items():
+			logging.info(f"\t\tStarting the probe for {self.host}:{p}")
+			future = executor.submit(P.check)
+			self.port_futures[p] = future
+		return self.port_futures.values()
+
+def dependency_success(name):
+	# Subtract one from the global dependency counter
+	remaining = total_dependencies.dec()
+	if (dependency_mode == "all") and (remaining > 0):
+		# We must wait for all remaining dependencies to succeed, so we do nothing
+		logging.info(f"There are still {remaining} unresolved dependencies...")
+		return False
+
+	# We can exit now if this is the last dependency to succeed,
+	# or if we were only waiting for the first dependency to succeed
+	if dependency_mode == "all":
+		logging.info("All dependencies have succeeded. Exiting with a success status.")
+	else:
+		logging.info("One dependency has succeeded, and only one was required to succeed. Exiting with a success status")
+	os._exit(0)
+
+def dependency_failure(name):
+	# Subtract one from the global dependency counter
+	remaining = total_dependencies.dec()
+	if (dependency_mode == "any") and (remaining > 0):
+		# We must wait for all remaining dependencies to fail, so we do nothing
+		logging.info(f"There are still {remaining} unresolved dependencies...")
+		return False
+
+	# We can exit now if this is the last dependency to fail,
+	# or if we were only waiting for the first dependency to fail
+	if dependency_mode == "all":
+		logging.info("A dependency has failed, but all were required to succeed. Exiting with an error status")
+	else:
+		logging.info("All dependencies have failed where at least one was required to succeed. Exiting with an error status")
+	os._exit(1)
+
+if len(sys.argv) != 2:
+	print(f"usage: {sys.argv[0]} dependency-json-file")
+	sys.exit(1)
+
+# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format = '%(asctime)s - %(threadName)-10s - %(levelname)s - %(message)s')
+
+try:
+	with open(sys.argv[1], "r") as f:
+		data = json.load(f)
+except Exception as e:
+	logging.error(e)
+	sys.exit(1)
+
+# TODO: parse out the "all" vs. "any"
+dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
+if (dependency_mode != "all") and (dependency_mode != "any"):
+	logging.info(f"The dependency mode value [{dependency_mode}] is not valid - must be either 'all' or 'any' (case-insensitive)")
+	sys.exit(1)
+
+try:
+	hosts = data["hosts"]
+except KeyError:
+	logging.info(f"No hosts found in the JSON file at [{sys.argv[1]}]")
+	sys.exit(0)
+
+logging.info(f"Dependency mode: {dependency_mode} required")
+
+total_threads = 0
+dependencies = {}
+for host, obj in hosts.items():
+	logging.info(f"Found a dependency on host [{host}]...")
+	dependencies[host] = Dependency(host, obj)
+	threads = dependencies[host].get_port_count()
+	logging.info(f"\tThe dependency references {threads} port(s)...")
+	total_threads += threads
+
+total_dependencies = ThreadedCounter(len(hosts))
+try:
+	with concurrent.futures.ThreadPoolExecutor(thread_name_prefix="Probe") as executor:
+		logging.info(f"Starting the {total_threads} threads (required for success: {dependency_mode})...")
+		futures = []
+		for h, d in dependencies.items():
+			futures.extend(d.start(executor))
+		logging.info(f"Waiting for the work to conclude ({len(futures)} futures)")
+		for f in futures:
+			try:
+				f.result()
+			except Exception as e:
+				logging.error(traceback.format_exception(e))
+				# We don't care...
+				pass
+		sys.exit(0)
+except KeyboardInterrupt:
+	logging.info("INTERRUPTED!")
+	os._exit(1)

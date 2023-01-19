@@ -5,7 +5,7 @@ FROM rockylinux:8
 #
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.0.2"
+ARG VER="1.0.3"
 ARG PKG="nettest"
 ARG UID="0"
 
