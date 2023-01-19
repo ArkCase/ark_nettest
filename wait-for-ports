@@ -20,6 +20,8 @@ KEY_ATTEMPTS = "attempts"
 MODE_ALL = "all"
 MODE_ANY = "any"
 
+MODES = { MODE_ALL : MODE_ALL, MODE_ANY : MODE_ANY }
+
 DEFAULT_TEMPLATE = {
 	KEY_MODE : MODE_ALL,
 	KEY_INITIAL_DELAY : 0,
@@ -29,7 +31,9 @@ DEFAULT_TEMPLATE = {
 }
 
 DEFAULT_DEPENDENCY_MODE = MODE_ALL
+MIN_INITIAL_DELAY = 0
 MIN_DELAY = 1
+MIN_TIMEOUT = 1
 MIN_ATTEMPTS = 1
 
 def format_exception(e):
@@ -157,8 +161,7 @@ class DependencyPort:
 			try:
 				logging.info(f"\t\tProbing {self.host}:{self.port} ({attempt + 1}/{self.attempts})...")
 				with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-					if self.timeout:
-						s.settimeout(self.timeout)
+					s.settimeout(self.timeout)
 					s.connect((self.host, self.port))
 					self.success(self.port)
 					return True
@@ -188,8 +191,8 @@ class Dependency:
 			os._exit(1)
 
 		self.mode = str(get_templated_value(obj, KEY_MODE)).lower()
-		if (self.mode != MODE_ALL) and (self.mode != MODE_ANY):
-			logging.info(f"Mode for host [{self.host}] value [{obj['mode']}] is not valid - must be either 'all' or 'any' (case-insensitive)")
+		if not (self.mode in MODES):
+			logging.info(f"Mode for host [{self.host}] value [{obj['mode']}] is not valid - must be in {MODES.keys()} (case-insensitive)")
 			os._exit(1)
 
 		initial_delay = int(get_templated_value(obj, KEY_INITIAL_DELAY))
@@ -201,11 +204,11 @@ class Dependency:
 			delay = MIN_DELAY
 
 		timeout = int(get_templated_value(obj, KEY_TIMEOUT))
-		if timeout < 0:
-			timeout = DEFAULT_TIMEOUT
+		if timeout < MIN_TIMEOUT:
+			timeout = MIN_TIMEOUT
 
 		attempts = int(get_templated_value(obj, KEY_ATTEMPTS))
-		if attempts < 1:
+		if attempts < MIN_ATTEMPTS:
 			attempts = MIN_ATTEMPTS
 
 		self.active_ports = ThreadedCounter(0)
@@ -357,8 +360,8 @@ except Exception as e:
 		sys.exit(1)
 
 dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
-if (dependency_mode != MODE_ALL) and (dependency_mode != MODE_ANY):
-	logging.info(f"The dependency mode value [{dependency_mode}] is not valid - must be either 'all' or 'any' (case-insensitive)")
+if not (dependency_mode in MODES):
+	logging.info(f"The dependency mode value [{dependency_mode}] is not valid - must be in {MODES.keys()} (case-insensitive)")
 	sys.exit(1)
 
 try:
@@ -384,14 +387,29 @@ for k in DEFAULT_TEMPLATE:
 				logging.error(f"The dependency template value [{k}] of [{v}] can't be cast to type {t}")
 				sys.exit(1)
 
+# Sanitize the values
+if not (DEFAULT_TEMPLATE[KEY_MODE] in MODES):
+	println(f"The dependency template mode [{DEFAULT_TEMPLATE[KEY_MODE]}] is not valid - must be in {MODES.keys()} (case-insensitive)")
+	sys.exit(1)
+if DEFAULT_TEMPLATE[KEY_INITIAL_DELAY] < MIN_INITIAL_DELAY:
+	DEFAULT_TEMPLATE[KEY_INITIAL_DELAY] = MIN_INITIAL_DELAY
+if DEFAULT_TEMPLATE[KEY_DELAY] < MIN_DELAY:
+	DEFAULT_TEMPLATE[KEY_DELAY] = MIN_DELAY
+if DEFAULT_TEMPLATE[KEY_TIMEOUT] < MIN_TIMEOUT:
+	DEFAULT_TEMPLATE[KEY_TIMEOUT] = MIN_TIMEOUT
+if DEFAULT_TEMPLATE[KEY_ATTEMPTS] < MIN_ATTEMPTS:
+	DEFAULT_TEMPLATE[KEY_ATTEMPTS] = MIN_ATTEMPTS
+
+logging.info(f"Dependency template:\n{json.dumps(DEFAULT_TEMPLATE, indent=4)}")
+
 total_threads = 0
 dependencies = {}
 for host, obj in hosts.items():
 	logging.info(f"Found a dependency on host [{host}]...")
 	dependencies[host] = Dependency(host, obj)
 	threads = dependencies[host].get_port_count()
-	logging.info(f"\tThe dependency references {threads} port(s)...")
 	total_threads += threads
+	logging.info(f"'{host}' = {json.dumps(obj, indent=4)}")
 
 total_dependencies = ThreadedCounter(len(hosts))
 try:
