@@ -2,7 +2,7 @@
   "hosts": {
     "tvserver": {
       "attempts": 3,
-      "initial_delay": 3,
+      "initialDelay": 3,
       "delay": 1,
       "mode": "any",
       "ports": [
@@ -12,7 +12,7 @@
     },
     "localhost": {
       "attempts": 3,
-      "initial_delay": 5,
+      "initialDelay": 5,
       "delay": 3,
       "mode": "all",
       "ports": [
@@ -22,7 +22,7 @@
     },
     "dns1": {
       "attempts": 3,
-      "initial_delay": 7,
+      "initialDelay": 7,
       "delay": 2,
       "mode": "all",
       "ports": [

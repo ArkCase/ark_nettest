@@ -11,7 +11,7 @@ import traceback
 import yaml
 
 KEY_MODE = "mode"
-KEY_INITIAL_DELAY = "initial_delay"
+KEY_INITIAL_DELAY = "initialDelay"
 KEY_DELAY = "delay"
 KEY_TIMEOUT = "timeout"
 KEY_ATTEMPTS = "attempts"
@@ -395,8 +395,8 @@ for host, obj in hosts.items():
 
 total_dependencies = ThreadedCounter(len(hosts))
 try:
-	with concurrent.futures.ThreadPoolExecutor(thread_name_prefix="Probe") as executor:
-		logging.info(f"Starting the {total_threads} threads (required for success: {dependency_mode})...")
+	logging.info(f"Starting the {total_threads} threads (required for success: {dependency_mode})...")
+	with concurrent.futures.ThreadPoolExecutor(max_workers=(total_threads + 1), thread_name_prefix="Probe") as executor:
 		futures = []
 		for h, d in dependencies.items():
 			futures.extend(d.start(executor))
