@@ -1,5 +1,6 @@
 #!/usr/bin/python
 import concurrent.futures
+import errno
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ ENV_INIT_DEPENDENCIES = "INIT_DEPENDENCIES"
 
 KEY_MODE = "mode"
 KEY_DEPENDENCIES = "dependencies"
+KEY_TEMPLATE = "template"
 KEY_INITIAL_DELAY = "initialDelay"
 KEY_DELAY = "delay"
 KEY_TIMEOUT = "timeout"
@@ -164,12 +166,13 @@ class DependencyPort:
 					s.connect((self.host, self.port))
 					self.success(self.port)
 					return True
-			except (TimeoutError, ConnectionRefusedError) as e:
+			except (TimeoutError, ConnectionError) as e:
 				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
 				exceptions.append(e)
 			except Exception as e:
 				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
-				logging.error(traceback.format_exc())
+				if (type(e) != OSError) or (e.errno not in [ errno.EHOSTUNREACH, errno.EHOSTDOWN ]):
+					logging.error(traceback.format_exc())
 				exceptions.append(e)
 
 			if (self.delay > 0) and ((attempt + 1) < self.attempts):
@@ -254,9 +257,9 @@ class Dependency:
 
 			# Signal upwards
 			if result == 1:
-				dependency_success(self.host)
+				host_dependency_success(self.host)
 			else:
-				dependency_failure(self.host)
+				host_dependency_failure(self.host)
 
 	def __port_success(self, port):
 		logging.info(f"Successfully probed [{self.host}:{port}]")
@@ -285,43 +288,43 @@ class Dependency:
 	def start(self, executor):
 		# Start the pollers for all the internal ports
 		self.active_ports.set(len(self.ports))
-		logging.info(f"\tStarting the probes for [{self.host}] (required: {self.mode})")
+		logging.info(f"\tStarting the probes for [{self.host}] (ports required for success: {self.mode})")
 		for p, P in self.ports.items():
 			logging.info(f"\t\tStarting the probe for {self.host}:{p}")
 			future = executor.submit(P.check)
 			self.port_futures[p] = future
 		return self.port_futures.values()
 
-def dependency_success(name):
+def host_dependency_success(name):
 	# Subtract one from the global dependency counter
 	remaining = total_dependencies.dec()
-	if (dependency_mode == MODE_ALL) and (remaining > 0):
+	if (host_dependency_mode == MODE_ALL) and (remaining > 0):
 		# We must wait for all remaining dependencies to succeed, so we do nothing
 		logging.info(f"There are still {remaining} unresolved dependencies...")
 		return False
 
 	# We can exit now if this is the last dependency to succeed,
 	# or if we were only waiting for the first dependency to succeed
-	if dependency_mode == MODE_ALL:
-		logging.info("All dependencies have succeeded. Exiting with a success status.")
+	if host_dependency_mode == MODE_ALL:
+		logging.info("All required dependencies have succeeded. Exiting with a success status.")
 	else:
 		logging.info("One dependency has succeeded, and only one was required to succeed. Exiting with a success status")
 	os._exit(0)
 
-def dependency_failure(name):
+def host_dependency_failure(name):
 	# Subtract one from the global dependency counter
 	remaining = total_dependencies.dec()
-	if (dependency_mode == MODE_ANY) and (remaining > 0):
+	if (host_dependency_mode == MODE_ANY) and (remaining > 0):
 		# We must wait for all remaining dependencies to fail, so we do nothing
 		logging.info(f"There are still {remaining} unresolved dependencies...")
 		return False
 
 	# We can exit now if this is the last dependency to fail,
 	# or if we were only waiting for the first dependency to fail
-	if dependency_mode == MODE_ALL:
+	if host_dependency_mode == MODE_ALL:
 		logging.info("A dependency has failed, but all were required to succeed. Exiting with an error status")
 	else:
-		logging.info("All dependencies have failed where at least one was required to succeed. Exiting with an error status")
+		logging.info("All required dependencies have failed where at least one was required to succeed. Exiting with an error status")
 	os._exit(1)
 
 if len(sys.argv) != 2:
@@ -369,9 +372,9 @@ except Exception as e:
 		logging.error(e)
 		sys.exit(1)
 
-dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
-if not (dependency_mode in MODES):
-	logging.info(f"The dependency mode value [{dependency_mode}] is not valid - must be in {MODES.keys()} (case-insensitive)")
+host_dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
+if not (host_dependency_mode in MODES):
+	logging.info(f"The host dependency mode value [{host_dependency_mode}] is not valid - must be in {MODES.keys()} (case-insensitive)")
 	sys.exit(1)
 
 try:
@@ -380,22 +383,24 @@ except KeyError:
 	logging.info(f"No dependencies found in the configuration file at [{source_file}]")
 	sys.exit(0)
 
-logging.info(f"Dependency mode: {dependency_mode} required")
+logging.info(f"Dependency mode: {host_dependency_mode} required")
 
 #
 # Make sure the template values are in range
 #
-dependency_template = data.get("template", {})
+dependency_template = data.get(KEY_TEMPLATE, {})
 for k in DEFAULT_TEMPLATE:
 	if k in dependency_template:
 		v = dependency_template[k]
 		t = type(DEFAULT_TEMPLATE[k])
 		if type(v) != t:
 			try:
-				DEFAULT_TEMPLATE[k] = t(v)
+				v = t(v)
 			except:
 				logging.error(f"The dependency template value [{k}] of [{v}] can't be cast to type {t}")
 				sys.exit(1)
+		logging.info("Applying the {k} value [{v}] to the template")
+		DEFAULT_TEMPLATE[k] = v
 
 # Sanitize the values
 if not (DEFAULT_TEMPLATE[KEY_MODE] in MODES):
@@ -423,7 +428,7 @@ for host, obj in hosts.items():
 
 total_dependencies = ThreadedCounter(len(hosts))
 try:
-	logging.info(f"Starting the {total_threads} threads (required for success: {dependency_mode})...")
+	logging.info(f"Starting the {total_threads} threads (hosts required for success: {host_dependency_mode})...")
 	with concurrent.futures.ThreadPoolExecutor(max_workers=(total_threads + 1), thread_name_prefix="Probe") as executor:
 		futures = []
 		for h, d in dependencies.items():
