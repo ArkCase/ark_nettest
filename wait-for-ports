@@ -343,25 +343,32 @@ if len(sys.argv) != 2:
 else:
 	# If the parameter is given, use it
 	source_file = sys.argv[1]
-	source_file_is_file = True
+	if source_file == "-":
+		source_file = sys.stdin
+		source_file_is_file = False
+	else:
+		source_file_is_file = True
 
 # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logging.basicConfig(level=logging.DEBUG, format = '%(asctime)s - %(threadName)-10s - %(levelname)s - %(message)s')
 
 # First try to load as a YAML file ... if that fails, try with JSON ...
 
+show_data = True
 try:
 	if source_file_is_file:
 		logging.info(f"Loading the configuration from the file [{source_file}]...")
 		with open(source_file, "r") as f:
-			data = yaml.load(f, Loader=yaml.SafeLoader)
-			if data is None:
-				raise Exception("Data is not in YAML format")
+			data = yaml.safe_load(f)
 	else:
-		logging.info(f"Parsing the configuration from the string: [\n{source_file}\n]...")
+		if type(source_file) == str:
+			logging.info(f"Parsing the configuration from the string: [\n{source_file}\n]...")
+			show_data = False
+		else:
+			logging.info("Parsing the configuration from stdin...")
 		data = yaml.safe_load(source_file)
-		if data is None:
-			raise Exception("Data is not in YAML format")
+	if data is None:
+		raise Exception("Data is not in YAML format")
 except Exception as e:
 	# Yaml parse failed ... try as JSON
 	logging.warning(f"File [{source_file}] was not in YAML format, trying JSON")
@@ -371,6 +378,9 @@ except Exception as e:
 	except Exception as e:
 		logging.error(e)
 		sys.exit(1)
+
+if show_data:
+	logging.info(f"Loaded configuration: [{json.dumps(data, indent=4)}]")
 
 host_dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
 if not (host_dependency_mode in MODES):
@@ -399,7 +409,6 @@ for k in DEFAULT_TEMPLATE:
 			except:
 				logging.error(f"The dependency template value [{k}] of [{v}] can't be cast to type {t}")
 				sys.exit(1)
-		logging.info("Applying the {k} value [{v}] to the template")
 		DEFAULT_TEMPLATE[k] = v
 
 # Sanitize the values
