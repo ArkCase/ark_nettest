@@ -38,9 +38,6 @@ MIN_DELAY = 1
 MIN_TIMEOUT = 1
 MIN_ATTEMPTS = 1
 
-def format_exception(e):
-	return "".join(traceback.format_exception(e))
-
 def get_templated_value(m, k):
 	return m.get(k, DEFAULT_TEMPLATE.get(k, None))
 
@@ -172,7 +169,7 @@ class DependencyPort:
 				exceptions.append(e)
 			except Exception as e:
 				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
-				logging.error(format_exception(e))
+				logging.error(traceback.format_exc())
 				exceptions.append(e)
 
 			if (self.delay > 0) and ((attempt + 1) < self.attempts):
@@ -436,7 +433,7 @@ try:
 			try:
 				f.result()
 			except Exception as e:
-				logging.error(format_exception(e))
+				logging.error(traceback.format_exc())
 				# We don't care...
 				pass
 		sys.exit(0)
