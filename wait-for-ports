@@ -358,7 +358,7 @@ try:
 			if data is None:
 				raise Exception("Data is not in YAML format")
 	else:
-		logging.info(f"Parsing the configruation from the string: [\n{source_file}\n]...")
+		logging.info(f"Parsing the configuration from the string: [\n{source_file}\n]...")
 		data = yaml.safe_load(source_file)
 		if data is None:
 			raise Exception("Data is not in YAML format")
