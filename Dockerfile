@@ -36,8 +36,10 @@ RUN yum -y install epel-release && \
         net-tools \
         nmap \
         openldap-clients \
+        openssl \
         python39 \
         python39-pyyaml \
+        tcpdump \
         telnet \
         vim \
         wget && \
