@@ -1,4 +1,8 @@
-FROM rockylinux:8
+ARG BASE_REGISTRY
+ARG BASE_REPO="arkcase/base"
+ARG BASE_TAG="8.7.0"
+
+FROM "${BASE_REGISTRY}/${BASE_REPO}:${BASE_TAG}"
 
 #
 # Basic Parameters
