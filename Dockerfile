@@ -1,3 +1,5 @@
+ARG ARCH="amd64"
+ARG OS="linux"
 ARG VER="1.0.4"
 ARG BASE_REGISTRY
 ARG BASE_REPO="arkcase/base"
@@ -8,10 +10,9 @@ FROM "${BASE_REGISTRY}/${BASE_REPO}:${BASE_TAG}"
 #
 # Basic Parameters
 #
-ARG ARCH="amd64"
-ARG OS="linux"
+ARG ARCH
+ARG OS
 ARG VER
-ARG PKG="nettest"
 ARG UID="0"
 
 #
