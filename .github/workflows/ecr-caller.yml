@@ -13,4 +13,4 @@ jobs:
       ECR_AWS_ORG_ID: ${{ secrets.ECR_AWS_ORG_ID }}
       ECR_AWS_ACCESS_KEY: ${{ secrets.ECR_AWS_ACCESS_KEY }}
       ECR_AWS_ACCOUNT_ID: ${{ secrets.ECR_AWS_ACCOUNT_ID }}
-      ECR_SECRET_ACCESS_KEY: ${{ secrets.ECR_SECRET_ACCESS_KEY }}
+      ECR_AWS_SECRET_ACCESS_KEY: ${{ secrets.ECR_AWS_SECRET_ACCESS_KEY }}
