@@ -45,6 +45,7 @@ RUN yum -y install epel-release && \
         openssl \
         python39 \
         python39-pyyaml \
+        python39-requests \
         tcpdump \
         telnet \
         vim \
