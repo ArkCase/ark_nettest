@@ -4,6 +4,7 @@ ARG BASE_TAG="8.7.0"
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="1.0.5"
+ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 
 FROM "${PUBLIC_REGISTRY}/${BASE_REPO}:${BASE_TAG}"
 
@@ -13,6 +14,7 @@ FROM "${PUBLIC_REGISTRY}/${BASE_REPO}:${BASE_TAG}"
 ARG ARCH
 ARG OS
 ARG VER
+ARG AWS_SRC
 ARG UID="0"
 
 #
@@ -33,11 +35,14 @@ RUN yum -y install epel-release && \
     yum -y install yum-utils which && \
     yum-config-manager \
         --enable devel \
-        --enable powertools && \
+        --enable powertools \
+    && \
     yum -y install \
         bind-utils \
         jq \
+        groff \
         kubectl \
+        less \
         nc \
         net-tools \
         nmap \
@@ -49,9 +54,17 @@ RUN yum -y install epel-release && \
         tcpdump \
         telnet \
         vim \
-        wget && \
+        wget \
+    && \
     update-alternatives --set python /usr/bin/python3.9 && \
-    yum -y clean all
+    yum -y clean all && \
+    mkdir -p "/aws" && \
+    curl "${AWS_SRC}" -o "/aws/awscliv2.zip" && \
+    cd "/aws" && \
+    unzip "awscliv2.zip" && \
+    ./aws/install && \
+    cd / && \
+    rm -rf "/aws"
 
 COPY nettest.yaml /
 COPY wait-for-ports /
