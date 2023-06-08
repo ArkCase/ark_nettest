@@ -3,7 +3,7 @@ ARG BASE_REPO="arkcase/base"
 ARG BASE_TAG="8.7.0"
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.0.5"
+ARG VER="1.0.6"
 ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 
 FROM "${PUBLIC_REGISTRY}/${BASE_REPO}:${BASE_TAG}"
@@ -68,6 +68,7 @@ RUN yum -y install epel-release && \
 
 COPY nettest.yaml /
 COPY wait-for-ports /
+COPY only-once /
 
 #
 # Final parameters

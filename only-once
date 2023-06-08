@@ -1,0 +1,68 @@
+#!/bin/bash
+
+set -euo pipefail
+
+timestamp() {
+	/usr/bin/date -u -Isec
+}
+
+say() {
+	echo -e "$(timestamp): ${@}"
+}
+
+err() {
+	say "ERROR: ${@}" 1>&2
+}
+
+fail() {
+	say "${@}" 1>&2
+	exit ${EXIT_CODE:-1}
+}
+
+quit() {
+	say "${@}"
+	exit ${EXIT_CODE:-0}
+}
+
+to_boolean() {
+	case "${1,,}" in
+		true | t | 1 | yes | on | enabled | enable ) echo "true" ;;
+		* ) echo "false" ;;
+	esac
+}
+
+[ -v WRAPPED_STATE ] || fail "Must set the WRAPPED_STATE environment variable to point to the location where to track if the initializer script has already been run"
+[ -e "${WRAPPED_STATE}" ] || fail "The wrapped script [${WRAPPED_STATE}] does not exist"
+[ -d "${WRAPPED_STATE}" ] || fail "The path [${WRAPPED_STATE}] is not a directory"
+[ -r "${WRAPPED_STATE}" ] || fail "The wrapped script [${WRAPPED_STATE}] is not readable"
+[ -w "${WRAPPED_STATE}" ] || fail "The wrapped script [${WRAPPED_STATE}] is not writable"
+[ -x "${WRAPPED_STATE}" ] || fail "The wrapped script [${WRAPPED_STATE}] is not executable"
+
+[ -v WRAPPED_SCRIPT ] || fail "Must set the WRAPPED_SCRIPT environment variable to point to the script to be wrapped"
+[ -e "${WRAPPED_SCRIPT}" ] || fail "The wrapped script [${WRAPPED_SCRIPT}] does not exist"
+[ -f "${WRAPPED_SCRIPT}" ] || fail "The path [${WRAPPED_SCRIPT}] is not a regular file"
+[ -r "${WRAPPED_SCRIPT}" ] || fail "The wrapped script [${WRAPPED_SCRIPT}] is not readable"
+[ -x "${WRAPPED_SCRIPT}" ] || fail "The wrapped script [${WRAPPED_SCRIPT}] is not executable"
+
+# In case the arguments haven't been defined
+[ -v WRAPPED_SCRIPT_ARGS ] || WRAPPED_SCRIPT_ARGS=""
+
+# If we're not given an explicit name to track state with, we deduce it from the script's
+# filename and add a dot in front to hide the file
+[ -v WRAPPED_STATE_NAME ] || WRAPPED_STATE_NAME=".${WRAPPED_SCRIPT##*/}"
+
+MARKER="${WRAPPED_STATE}/${WRAPPED_STATE_NAME}"
+[ -e "${MARKER}" ] && quit "The state has already been initialized"
+
+say "Calling the wrapped script"
+(
+	# This should help mitigate exploitation
+	set -- ${WRAPPED_SCRIPT_ARGS}
+	set -x
+	exec "${WRAPPED_SCRIPT}" "${@}"
+) || fail "Failed to initialize the state (rc=${?})"
+
+TS="$(timestamp)"
+say "Wrapped script succeeded, marking the state to [${MARKER}] (timestamp = ${TS})"
+echo "${TS}" > "${MARKER}" || fail "Failed to create the state tracking marker"
+exit 0
