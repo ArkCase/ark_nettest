@@ -32,7 +32,6 @@ LABEL IMAGE_SOURCE="https://github.com/ArkCase/ark_nettest"
 #
 COPY kubernetes.repo /etc/yum.repos.d/
 RUN yum -y install epel-release && \
-    yum -y update && \
     yum -y install yum-utils which && \
     yum-config-manager \
         --enable devel \
