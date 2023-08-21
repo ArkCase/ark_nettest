@@ -54,6 +54,9 @@ to_boolean() {
 MARKER="${WRAPPED_STATE}/${WRAPPED_STATE_NAME}"
 [ -e "${MARKER}" ] && quit "The state has already been initialized"
 
+[ -v SSL_DIR ] || SSL_DIR="/.ssl"
+acme-init
+
 say "Calling the wrapped script"
 (
 	# This should help mitigate exploitation
