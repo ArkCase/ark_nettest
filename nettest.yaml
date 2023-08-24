@@ -50,4 +50,4 @@ spec:
   serviceAccountName: nettest
   containers:
     - name: nettest
-      image: 345280441424.dkr.ecr.ap-south-1.amazonaws.com/ark_nettest:1.0.2
+      image: public.ecr.aws/ark_nettest:latest

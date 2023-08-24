@@ -1,0 +1,31 @@
+#!/bin/bash
+
+say() {
+	echo -e "$(date -Ins -u): ${@}"
+}
+
+err() {
+	say "ERROR: ${@}" 1>&2
+}
+
+fail() {
+	say "${@}" 1>&2
+	exit ${EXIT_CODE:-1}
+}
+
+if [ ${#} -eq 0 ] ; then
+	echo -e "usage: ${BASH_SOURCE:-${0}} var1 [var2 var3 ... varN]" 1>&2
+	exit 1
+fi
+
+for VAR in "${@}" ; do
+	[[ "${VAR,,}" =~ ^[a-z][a-z0-9_]*$ ]] || fail "The variable name [${VAR}] is invalid"
+	[ -v "${VAR}" ] || fail "The environment variable [${VAR}] is not defined"
+	echo "########################################"
+	echo "############# BEGIN ${VAR} #############"
+	echo "########################################"
+	echo "${!VAR}"
+	echo "########################################"
+	echo "############## END ${VAR} ##############"
+	echo "########################################"
+done | bash
