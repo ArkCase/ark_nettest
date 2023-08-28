@@ -150,6 +150,16 @@ class DependencyPort:
 		self.success = success
 		self.failure = failure
 
+	def __is_silent_error(self, e):
+		if e is None:
+			return True
+		t = type(e)
+		if (t == OSError) and (e.errno in [ errno.EHOSTUNREACH, errno.EHOSTDOWN ]):
+			return True
+		if (t == socket.gaierror) and (e.errno in [ socket.EAI_AGAIN, socket.EAI_NODATA ]):
+			return True
+		return False
+
 	def check(self):
 		# Apply any initial delay
 		logging.info(f"\tLaunching the prober thread for {self.host}:{self.port}...")
@@ -161,9 +171,10 @@ class DependencyPort:
 		for attempt in range(self.attempts):
 			try:
 				logging.info(f"\t\tProbing {self.host}:{self.port} ({attempt + 1}/{self.attempts})...")
+				address = socket.gethostbyname(self.host)
 				with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 					s.settimeout(self.timeout)
-					s.connect((self.host, self.port))
+					s.connect((address, self.port))
 					self.success(self.port)
 					return True
 			except (TimeoutError, ConnectionError) as e:
@@ -171,7 +182,7 @@ class DependencyPort:
 				exceptions.append(e)
 			except Exception as e:
 				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
-				if (type(e) != OSError) or (e.errno not in [ errno.EHOSTUNREACH, errno.EHOSTDOWN ]):
+				if not self.__is_silent_error(e):
 					logging.error(traceback.format_exc())
 				exceptions.append(e)
 
@@ -189,8 +200,10 @@ class Dependency:
 		try:
 			self.address = socket.gethostbyname(self.host)
 		except Exception as e:
-			logging.info(f"ERROR: hostname [{host}] could not be resolved: {e}")
-			os._exit(1)
+			# If this isn't a retryable lookup error, explode early
+			if (type(e) != socket.gaierror) or (e.errno not in [ socket.EAI_AGAIN, socket.EAI_NODATA ]):
+				logging.info(f"ERROR: hostname [{host}] could not be resolved: {e}")
+				os._exit(1)
 
 		self.mode = str(get_templated_value(obj, KEY_MODE)).lower()
 		if not (self.mode in MODES):
