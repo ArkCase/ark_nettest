@@ -1,6 +1,6 @@
 ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG BASE_REPO="arkcase/base"
-ARG BASE_TAG="8.8-02"
+ARG BASE_TAG="8-01"
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="1.1.2"
