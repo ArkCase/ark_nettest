@@ -140,7 +140,7 @@ class ThreadedCounter:
 			return False
 
 class DependencyPort:
-	def __init__(self, host, port, initial_delay, delay, timeout, attempts, success, failure):
+	def __init__(self, host, port, initial_delay, delay, timeout, attempts, success, failure, final_result):
 		self.host = host
 		self.port = port
 		self.initial_delay = initial_delay
@@ -149,6 +149,7 @@ class DependencyPort:
 		self.attempts = attempts
 		self.success = success
 		self.failure = failure
+		self.final_result = final_result
 
 	def __is_silent_error(self, e):
 		if e is None:
@@ -169,6 +170,8 @@ class DependencyPort:
 
 		exceptions = []
 		for attempt in range(self.attempts):
+			caught = None
+			report_caught = False
 			try:
 				logging.info(f"\t\tProbing {self.host}:{self.port} ({attempt + 1}/{self.attempts})...")
 				address = socket.gethostbyname(self.host)
@@ -177,14 +180,22 @@ class DependencyPort:
 					s.connect((address, self.port))
 					self.success(self.port)
 					return True
-			except (TimeoutError, ConnectionError) as e:
-				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
-				exceptions.append(e)
+			except (socket.timeout, TimeoutError, ConnectionError) as e:
+				caught = e
 			except Exception as e:
-				logging.info(f"\t\tERROR: tcptest({self.host}, {self.port}, {self.timeout}) == {e} (attempt # {attempt + 1} of {self.attempts})")
+				caught = e
 				if not self.__is_silent_error(e):
-					logging.error(traceback.format_exc())
-				exceptions.append(e)
+					report_caught = True
+			finally:
+				final_result = self.final_result.get()
+				if final_result != 0:
+					return (final_result == 1)
+
+				if caught:
+					logging.error(f"\t\ttcptest({self.host}, {self.port}, {self.timeout}) == {caught} (attempt # {attempt + 1} of {self.attempts})")
+					exceptions.append(caught)
+					if report_caught:
+						logging.error(traceback.format_exception(None, caught, caught.__traceback__))
 
 			if (self.delay > 0) and ((attempt + 1) < self.attempts):
 				logging.info(f"\t\tApplying a delay of {self.delay}s before the next attempt ({attempt + 2}/{self.attempts})...")
@@ -246,7 +257,7 @@ class Dependency:
 			if (p < 1) or (p > 65535):
 				logging.info(f"Port [{port}] must be between 1 and 65535")
 
-			self.ports[p] = DependencyPort(self.host, p, initial_delay, delay, timeout, attempts, self.__port_success, self.__port_failure)
+			self.ports[p] = DependencyPort(self.host, p, initial_delay, delay, timeout, attempts, self.__port_success, self.__port_failure, self.final_result)
 
 	def __set_result_and_cancel_futures(self, result):
 		if self.final_result.setIf(0, result):
