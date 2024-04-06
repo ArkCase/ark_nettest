@@ -114,13 +114,18 @@ for VAR in "${@}" ; do
 
 		"${DISABLE:-false}" && ok "The test from ${VAR} is disabled" && exit 0
 
-		START="$(/usr/bin/date +%s)"
 		for (( A=1 ; A <= RETRY_COUNT ; A++ )) ; do
+
+			if [ ${A} -gt 1 ] ; then
+				say "⌛ Applying a wait of ${RETRY_WAIT} before the next attempt"
+				/usr/bin/sleep ${RETRY_WAIT} || fail "Retry wait aborted"
+			fi
+
 			ATTEMPT="(${A}/${RETRY_COUNT})"
 			say "👉 Running the check described in ${VAR} ${ATTEMPT}"
 			
 			RC=0
-			/usr/bin/timeout --signal=KILL --foreground ${TIMEOUT} bash <<< "${!VAR}" || RC=${?}
+			/usr/bin/timeout --signal=KILL --foreground ${TIMEOUT} /usr/bin/bash <<< "${!VAR}" || RC=${?}
 			[ ${RC} -eq 0 ] && ok "Check from ${VAR} succeeded ${ATTEMPT}" && exit 0
 
 			case "${RC}" in
