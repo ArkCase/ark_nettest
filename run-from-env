@@ -1,9 +1,11 @@
 #!/bin/bash
 
-RE_NUM="^[1-9][0-9]*$"
+RE_DIGITS="[1-9][0-9]*"
+RE_NUM="^${RE_DIGITS}$"
+RE_ZERO="^(0|${RE_DIGITS})$"
 
-DEFAULT_TIMEOUT="5"
-RE_TIMEOUT="${RE_NUM}"
+DEFAULT_TIMEOUT="0"
+RE_TIMEOUT="${RE_ZERO}"
 DEFAULT_RETRY_COUNT="5"
 RE_RETRY_COUNT="${RE_NUM}"
 DEFAULT_RETRY_WAIT="5"
@@ -14,7 +16,7 @@ RE_DISABLE="^([fF][aA][lL][sS]|[tT][rR][uU])[eE]$"
 
 [ -v TIMEOUT ] || TIMEOUT=""
 [ -n "${TIMEOUT}" ] || TIMEOUT="3"
-[[ "${TIMEOUT}" =~ ${RE_NUM} ]] || TIMEOUT="${DEFAULT_TIMEOUT}"
+[[ "${TIMEOUT}" =~ ${RE_ZERO} ]] || TIMEOUT="${DEFAULT_TIMEOUT}"
 
 [ -v RETRY_COUNT ] || RETRY_COUNT=""
 [ -n "${RETRY_COUNT}" ] || RETRY_COUNT="3"
@@ -89,9 +91,9 @@ get_value()
 for VAR in "${@}" ; do
 	[[ "${VAR,,}" =~ ^[a-z][a-z0-9_]*$ ]] || fail "The variable name [${VAR}] is invalid"
 	[ -v "${VAR}" ] || fail "The environment variable [${VAR}] is not defined"
-	echo "########################################"
-	echo "############# BEGIN ${VAR} #############"
-	echo "########################################"
+	say "########################################"
+	say "# BEGIN: ${VAR}"
+	say "########################################"
 
 	RC=0
 	(
@@ -106,13 +108,18 @@ for VAR in "${@}" ; do
 		#
 		for N in DISABLE TIMEOUT RETRY_COUNT RETRY_WAIT ; do
 			V="$(get_value "${VAR}" "${N}")"
-			echo "${VAR}_${N}=${V@Q}"
+			say "${VAR}_${N}=${V@Q}"
 			eval export ${N}=${V@Q}
 		done
 
 		DISABLE="${DISABLE,,}"
 
 		"${DISABLE:-false}" && ok "The test from ${VAR} is disabled" && exit 0
+
+		say "########################################"
+		say "This is the check described in ${VAR}:"
+		say "########################################\n${!VAR}"
+		say "########################################"
 
 		for (( A=1 ; A <= RETRY_COUNT ; A++ )) ; do
 
@@ -122,22 +129,25 @@ for VAR in "${@}" ; do
 			fi
 
 			ATTEMPT="(${A}/${RETRY_COUNT})"
-			say "👉 Running the check described in ${VAR} ${ATTEMPT}"
-			
+			say "👉 Running the check ${ATTEMPT}"
+
 			RC=0
+			say "########################################"
 			/usr/bin/timeout --signal=KILL --foreground ${TIMEOUT} /usr/bin/bash <<< "${!VAR}" || RC=${?}
-			[ ${RC} -eq 0 ] && ok "Check from ${VAR} succeeded ${ATTEMPT}" && exit 0
+			say "########################################"
+			[ ${RC} -eq 0 ] && ok "Check succeeded ${ATTEMPT}" && exit 0
 
 			case "${RC}" in
-				124 ) say "\t⌛ Check from ${VAR} timed out ${ATTEMPT}" ;;
-				* )	say "\t❌ Check from ${VAR} failed - rc = ${RC} ${ATTEMPT}" ;;
+				124 ) say "⌛ Check timed out ${ATTEMPT}" ;;
+				* )	say "❌ Check failed with status ${RC} ${ATTEMPT}" ;;
 			esac
 		done
 		exit 1
 	) || RC=${?}
 
-	echo "########################################"
-	echo "############## END ${VAR} ##############"
-	echo "########################################"
-	[ ${RC} -eq 0 ] || fail "Failed to execute the script from ${VAR}"
+	say "########################################"
+	say "# END: ${VAR}"
+	say "########################################"
+	[ ${RC} -eq 0 ] || exit ${RC}
 done
+exit 0
