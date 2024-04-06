@@ -1,22 +1,90 @@
 #!/bin/bash
 
-say() {
-	echo -e "$(date -Ins -u): ${@}"
+RE_NUM="^[1-9][0-9]*$"
+
+DEFAULT_TIMEOUT="5"
+RE_TIMEOUT="${RE_NUM}"
+DEFAULT_RETRY_COUNT="5"
+RE_RETRY_COUNT="${RE_NUM}"
+DEFAULT_RETRY_WAIT="5"
+RE_RETRY_WAIT="${RE_NUM}"
+
+DISABLE="false"
+RE_DISABLE="^([fF][aA][lL][sS]|[tT][rR][uU])[eE]$"
+
+[ -v TIMEOUT ] || TIMEOUT=""
+[ -n "${TIMEOUT}" ] || TIMEOUT="3"
+[[ "${TIMEOUT}" =~ ${RE_NUM} ]] || TIMEOUT="${DEFAULT_TIMEOUT}"
+
+[ -v RETRY_COUNT ] || RETRY_COUNT=""
+[ -n "${RETRY_COUNT}" ] || RETRY_COUNT="3"
+[[ "${RETRY_COUNT}" =~ ${RE_RETRY_COUNT} ]] || RETRY_COUNT="${DEFAULT_RETRY_COUNT}"
+
+[ -v RETRY_WAIT ] || RETRY_WAIT=""
+[ -n "${RETRY_WAIT}" ] || RETRY_WAIT="10"
+[[ "${RETRY_WAIT}" =~ ${RE_RETRY_WAIT} ]] || RETRY_WAIT="${DEFAULT_RETRY_WAIT}"
+
+timestamp()
+{
+	/usr/bin/date -Ins
 }
 
-err() {
-	say "ERROR: ${@}" 1>&2
+say()
+{
+	echo -e "$(timestamp): ${@}"
 }
 
-fail() {
-	say "${@}" 1>&2
+ok()
+{
+	say "✅ ${@}"
+}
+
+warn()
+{
+	say "⚠️ ${@}"
+}
+
+err()
+{
+	say "❌ ${@}" 1>&2
+}
+
+fail()
+{
+	err "${@}"
 	exit ${EXIT_CODE:-1}
 }
 
-if [ ${#} -eq 0 ] ; then
+usage()
+{
 	echo -e "usage: ${BASH_SOURCE:-${0}} var1 [var2 var3 ... varN]" 1>&2
 	exit 1
-fi
+}
+
+get_value()
+{
+	local BASE="${1}"
+	local VAR="${2}"
+	local OVERRIDE="${BASE}_${VAR}"
+
+	local RET=""
+
+	# Compute the value
+	[ -v "${OVERRIDE}" ] && RET="${!OVERRIDE}"
+	[ -z "${RET}" ] && [ -v "${VAR}" ] && RET="${!VAR}"
+
+	# Validate the value
+	local RE="RE_${VAR}"
+	if [[ ! "${RET}" =~ ${!RE} ]] ; then
+		local DEF="DEFAULT_${VAR}"
+		[ -v "${DEF}" ] && RET="${!DEF}"
+	fi
+
+	# Return the value
+	echo -n "${RET}"
+}
+
+[ ${#} -gt 0 ] || usage
 
 for VAR in "${@}" ; do
 	[[ "${VAR,,}" =~ ^[a-z][a-z0-9_]*$ ]] || fail "The variable name [${VAR}] is invalid"
@@ -24,8 +92,47 @@ for VAR in "${@}" ; do
 	echo "########################################"
 	echo "############# BEGIN ${VAR} #############"
 	echo "########################################"
-	echo "${!VAR}"
+
+	RC=0
+	(
+		set -euo pipefail
+
+		#
+		# We can control timeouts, attempts, and even
+		# enable/disable things by looking for other
+		# envvars like ${VAR}_DISABLE, ${VAR}_TIMEOUT,
+		# ${VAR}_RETRY_WAIT, and ${VAR}_RETRY_COUNT,
+		# and processing them accordingly
+		#
+		for N in DISABLE TIMEOUT RETRY_COUNT RETRY_WAIT ; do
+			V="$(get_value "${VAR}" "${N}")"
+			echo "${VAR}_${N}=${V@Q}"
+			eval export ${N}=${V@Q}
+		done
+
+		DISABLE="${DISABLE,,}"
+
+		"${DISABLE:-false}" && ok "The test from ${VAR} is disabled" && exit 0
+
+		START="$(/usr/bin/date +%s)"
+		for (( A=1 ; A <= RETRY_COUNT ; A++ )) ; do
+			ATTEMPT="(${A}/${RETRY_COUNT})"
+			say "👉 Running the check described in ${VAR} ${ATTEMPT}"
+			
+			RC=0
+			/usr/bin/timeout --signal=KILL --foreground ${TIMEOUT} bash <<< "${!VAR}" || RC=${?}
+			[ ${RC} -eq 0 ] && ok "Check from ${VAR} succeeded ${ATTEMPT}" && exit 0
+
+			case "${RC}" in
+				124 ) say "\t⌛ Check from ${VAR} timed out ${ATTEMPT}" ;;
+				* )	say "\t❌ Check from ${VAR} failed - rc = ${RC} ${ATTEMPT}" ;;
+			esac
+		done
+		exit 1
+	) || RC=${?}
+
 	echo "########################################"
 	echo "############## END ${VAR} ##############"
 	echo "########################################"
-done | bash
+	[ ${RC} -eq 0 ] || fail "Failed to execute the script from ${VAR}"
+done
