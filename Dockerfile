@@ -1,7 +1,7 @@
 ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.2.2"
+ARG VER="1.2.3"
 ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 
 ARG BASE_REPO="arkcase/base"
@@ -52,6 +52,7 @@ RUN yum -y install epel-release && \
         python39 \
         python39-pyyaml \
         python39-requests \
+        screen \
         tcpdump \
         telnet \
         vim \
