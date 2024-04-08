@@ -3,6 +3,7 @@
 RE_DIGITS="[1-9][0-9]*"
 RE_NUM="^${RE_DIGITS}$"
 RE_ZERO="^(0|${RE_DIGITS})$"
+RE_BOOLEAN="^([fF][aA][lL][sS]|[tT][rR][uU])[eE]$"
 
 DEFAULT_TIMEOUT="0"
 RE_TIMEOUT="${RE_ZERO}"
@@ -12,7 +13,9 @@ DEFAULT_RETRY_WAIT="5"
 RE_RETRY_WAIT="${RE_NUM}"
 
 DISABLE="false"
-RE_DISABLE="^([fF][aA][lL][sS]|[tT][rR][uU])[eE]$"
+DEBUG="false"
+RE_DISABLE="${RE_BOOLEAN}"
+RE_DEBUG="${RE_BOOLEAN}"
 
 [ -v TIMEOUT ] || TIMEOUT=""
 [ -n "${TIMEOUT}" ] || TIMEOUT=""
@@ -106,13 +109,14 @@ for VAR in "${@}" ; do
 		# ${VAR}_RETRY_WAIT, and ${VAR}_RETRY_COUNT,
 		# and processing them accordingly
 		#
-		for N in DISABLE TIMEOUT RETRY_COUNT RETRY_WAIT ; do
+		for N in DISABLE DEBUG TIMEOUT RETRY_COUNT RETRY_WAIT ; do
 			V="$(get_value "${VAR}" "${N}")"
 			say "${VAR}_${N}=${V@Q}"
 			eval export ${N}=${V@Q}
 		done
 
 		DISABLE="${DISABLE,,}"
+		DEBUG="${DEBUG,,}"
 
 		"${DISABLE:-false}" && ok "The test from ${VAR} is disabled" && exit 0
 
@@ -121,6 +125,7 @@ for VAR in "${@}" ; do
 		say "########################################\n${!VAR}"
 		say "########################################"
 
+		"${DEBUG}" && DEBUG="-x"
 		for (( A=1 ; A <= RETRY_COUNT ; A++ )) ; do
 
 			if [ ${A} -gt 1 ] ; then
@@ -133,7 +138,7 @@ for VAR in "${@}" ; do
 
 			RC=0
 			say "########################################"
-			/usr/bin/timeout --signal=KILL --foreground ${TIMEOUT} /usr/bin/bash <<< "${!VAR}" || RC=${?}
+			/usr/bin/timeout --signal=KILL --foreground ${TIMEOUT} /usr/bin/bash ${DEBUG} <<< "${!VAR}" || RC=${?}
 			say "########################################"
 			[ ${RC} -eq 0 ] && ok "Check succeeded ${ATTEMPT}" && exit 0
 
