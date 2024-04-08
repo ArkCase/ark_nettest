@@ -15,15 +15,15 @@ DISABLE="false"
 RE_DISABLE="^([fF][aA][lL][sS]|[tT][rR][uU])[eE]$"
 
 [ -v TIMEOUT ] || TIMEOUT=""
-[ -n "${TIMEOUT}" ] || TIMEOUT="3"
+[ -n "${TIMEOUT}" ] || TIMEOUT=""
 [[ "${TIMEOUT}" =~ ${RE_ZERO} ]] || TIMEOUT="${DEFAULT_TIMEOUT}"
 
 [ -v RETRY_COUNT ] || RETRY_COUNT=""
-[ -n "${RETRY_COUNT}" ] || RETRY_COUNT="3"
+[ -n "${RETRY_COUNT}" ] || RETRY_COUNT=""
 [[ "${RETRY_COUNT}" =~ ${RE_RETRY_COUNT} ]] || RETRY_COUNT="${DEFAULT_RETRY_COUNT}"
 
 [ -v RETRY_WAIT ] || RETRY_WAIT=""
-[ -n "${RETRY_WAIT}" ] || RETRY_WAIT="10"
+[ -n "${RETRY_WAIT}" ] || RETRY_WAIT=""
 [[ "${RETRY_WAIT}" =~ ${RE_RETRY_WAIT} ]] || RETRY_WAIT="${DEFAULT_RETRY_WAIT}"
 
 timestamp()
