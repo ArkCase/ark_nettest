@@ -125,7 +125,7 @@ for VAR in "${@}" ; do
 		say "########################################\n${!VAR}"
 		say "########################################"
 
-		"${DEBUG}" && DEBUG="-x"
+		"${DEBUG}" && DEBUG="-x" || DEBUG=""
 		for (( A=1 ; A <= RETRY_COUNT ; A++ )) ; do
 
 			if [ ${A} -gt 1 ] ; then

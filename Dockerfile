@@ -1,7 +1,7 @@
 ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.2.5"
+ARG VER="1.2.6"
 ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 
 ARG BASE_REPO="arkcase/base"
