@@ -14,6 +14,7 @@ import yaml
 ENV_INIT_DEPENDENCIES = "INIT_DEPENDENCIES"
 
 KEY_MODE = "mode"
+KEY_ALTERNATE = "alternate"
 KEY_DEPENDENCIES = "dependencies"
 KEY_TEMPLATE = "template"
 KEY_INITIAL_DELAY = "initialDelay"
@@ -28,6 +29,7 @@ MODES = { MODE_ALL : MODE_ALL, MODE_ANY : MODE_ANY }
 
 DEFAULT_TEMPLATE = {
 	KEY_MODE : MODE_ALL,
+	KEY_ALTERNATE : "",
 	KEY_INITIAL_DELAY : 0,
 	KEY_DELAY : 5,
 	KEY_TIMEOUT : 15,
@@ -42,6 +44,30 @@ MIN_ATTEMPTS = 1
 
 def get_templated_value(m, k):
 	return m.get(k, DEFAULT_TEMPLATE.get(k, None))
+
+def resolve_alternate(alternate):
+	# Only apply additional processing if it's a non-empty string
+	if alternate:
+		# If it starts with "env:", it's an envvar value
+		if alternate.startswith("env:"):
+			envvar = alternate[4:]
+			logging.info(f"\tResolving an alternate hostname from envvar [{envvar}]...")
+			alternate = os.getenv(envvar)
+			logging.info(f"\t\tAlternate hostname from {envvar} computed as [{alternate}]")
+			return alternate
+
+		# If it starts with "file:", it's a file path
+		if alternate.startswith("file:"):
+			file = alternate[5:]
+			logging.info(f"\tResolving an alternate hostname from the file [{file}]...")
+			with open(file, "r") as f:
+				alternate = f.read()
+				logging.info(f"\t\tAlternate hostname from [{file}] computed as [{alternate}]")
+				return alternate
+
+		# otherwise, assume it's a literal hostname and return it intact...
+		logging.info(f"\t\tAlternate hostname computed as [{alternate}]")
+	return alternate
 
 class Lock:
 	def __init__(self, rwl, myEnter, myExit):
@@ -207,6 +233,10 @@ class DependencyPort:
 class Dependency:
 	def __init__(self, host, obj):
 		self.host = host
+		alternate = resolve_alternate(str(get_templated_value(obj, KEY_ALTERNATE)))
+		if alternate:
+			self.host = alternate;
+
 		self.lock = threading.RLock()
 		try:
 			self.address = socket.gethostbyname(self.host)
