@@ -235,7 +235,7 @@ class Dependency:
 		self.host = host
 		alternate = resolve_alternate(str(get_templated_value(obj, KEY_ALTERNATE)))
 		if alternate:
-			self.host = alternate;
+			self.host = alternate.strip();
 
 		self.lock = threading.RLock()
 		try:
