@@ -4,6 +4,7 @@ import errno
 import json
 import logging
 import os
+import re
 import socket
 import sys
 import threading
@@ -42,31 +43,48 @@ MIN_DELAY = 1
 MIN_TIMEOUT = 1
 MIN_ATTEMPTS = 1
 
+RE_RFC_1123 = re.compile("^([a-z0-9][a-z0-9-]*)?[a-z0-9]([.]([a-z0-9][a-z0-9-]*)?[a-z0-9])*$")
+
+def log_ok(msg):
+	logging.info(f"✅ {msg}")
+
+def log_warn(msg):
+	logging.warning(f"⚠️ {msg}")
+
+def log_err(msg):
+	logging.error(f"❌ {msg}")
+
+def fail(msg, code = 1):
+	log_err(msg)
+	os._exit(code)
+
 def get_templated_value(m, k):
 	return m.get(k, DEFAULT_TEMPLATE.get(k, None))
 
 def resolve_alternate(alternate):
 	# Only apply additional processing if it's a non-empty string
 	if alternate:
-		# If it starts with "env:", it's an envvar value
+		source = alternate
 		if alternate.startswith("env:"):
+			# If it starts with "env:", it's an envvar value
 			envvar = alternate[4:]
-			logging.info(f"\tResolving an alternate hostname from envvar [{envvar}]...")
+			logging.info(f"\t🔍 Resolving an alternate hostname from envvar [{envvar}]...")
 			alternate = os.getenv(envvar)
-			logging.info(f"\t\tAlternate hostname from {envvar} computed as [{alternate}]")
-			return alternate
-
-		# If it starts with "file:", it's a file path
-		if alternate.startswith("file:"):
+		elif alternate.startswith("file:"):
+			# If it starts with "file:", it's a file path
 			file = alternate[5:]
-			logging.info(f"\tResolving an alternate hostname from the file [{file}]...")
-			with open(file, "r") as f:
-				alternate = f.read()
-				logging.info(f"\t\tAlternate hostname from [{file}] computed as [{alternate}]")
-				return alternate
+			logging.info(f"\t💾 Resolving an alternate hostname from the file [{file}]...")
+			try:
+				with open(file, "r") as f:
+					alternate = f.read().strip()
+			except Exception as e:
+				alternate = None
+				log_err(f"Alternate hostname from file [{file}] could not be resolved: {e}")
+		else:
+			# otherwise, assume it's a literal hostname and return it intact...
+			logging.info(f"\t🔁 Using the alternate hostname [{alternate}]...")
 
-		# otherwise, assume it's a literal hostname and return it intact...
-		logging.info(f"\t\tAlternate hostname computed as [{alternate}]")
+		logging.info(f"\t\t🔦 The alternate hostname from [{source}] was resolved to [{alternate}]")
 	return alternate
 
 class Lock:
@@ -189,9 +207,9 @@ class DependencyPort:
 
 	def check(self):
 		# Apply any initial delay
-		logging.info(f"\tLaunching the prober thread for {self.host}:{self.port}...")
+		logging.info(f"\t⚡ Launching the prober thread for {self.host}:{self.port}...")
 		if (self.initial_delay > 0):
-			logging.info(f"\t\tApplying the initial delay of {self.initial_delay}s...")
+			logging.info(f"\t\t⏳ Applying the initial delay of {self.initial_delay}s...")
 			time.sleep(self.initial_delay)
 
 		exceptions = []
@@ -199,7 +217,7 @@ class DependencyPort:
 			caught = None
 			report_caught = False
 			try:
-				logging.info(f"\t\tProbing {self.host}:{self.port} ({attempt + 1}/{self.attempts})...")
+				logging.info(f"\t\t📡 Probing {self.host}:{self.port} ({attempt + 1}/{self.attempts})...")
 				address = socket.gethostbyname(self.host)
 				with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 					s.settimeout(self.timeout)
@@ -218,13 +236,13 @@ class DependencyPort:
 					return (final_result == 1)
 
 				if caught:
-					logging.error(f"\t\ttcptest({self.host}, {self.port}, {self.timeout}) == {caught} (attempt # {attempt + 1} of {self.attempts})")
+					logging.error(f"\t\t❌ tcptest({self.host}, {self.port}, {self.timeout}) == {caught} (attempt # {attempt + 1} of {self.attempts})")
 					exceptions.append(caught)
 					if report_caught:
-						logging.error(traceback.format_exception(None, caught, caught.__traceback__))
+						log_err(traceback.format_exception(None, caught, caught.__traceback__))
 
 			if (self.delay > 0) and ((attempt + 1) < self.attempts):
-				logging.info(f"\t\tApplying a delay of {self.delay}s before the next attempt ({attempt + 2}/{self.attempts})...")
+				logging.info(f"\t\t⏳ Applying a delay of {self.delay}s before the next attempt ({attempt + 2}/{self.attempts})...")
 				time.sleep(self.delay)
 
 		self.failure(self.port, exceptions)
@@ -233,23 +251,35 @@ class DependencyPort:
 class Dependency:
 	def __init__(self, host, obj):
 		self.host = host
-		alternate = resolve_alternate(str(get_templated_value(obj, KEY_ALTERNATE)))
-		if alternate:
-			self.host = alternate.strip();
+		alternate_source = str(get_templated_value(obj, KEY_ALTERNATE))
+		if alternate_source:
+			alternate = resolve_alternate(alternate_source)
+			if alternate:
+				# If we got a value, strip it ...
+				alternate = alternate.strip();
+
+				# If the stripped value is empty, this is an error
+				if not alternate:
+					raise Exception(f"The alternate hostname from [{alternate_source}] resolved to an empty value")
+
+				# Use the alternate hostname
+				self.host = alternate
+
+		# Check to see if the host is a valid, RFC-1123 hostname
+		if not RE_RFC_1123.match(self.host.lower()):
+			fail(f"Hostname [{self.host}] is not valid per RFC-1123")
 
 		self.lock = threading.RLock()
 		try:
-			self.address = socket.gethostbyname(self.host)
+			socket.gethostbyname(self.host)
 		except Exception as e:
 			# If this isn't a retryable lookup error, explode early
-			if (type(e) != socket.gaierror) or (e.errno not in [ socket.EAI_AGAIN, socket.EAI_NODATA ]):
-				logging.info(f"ERROR: hostname [{host}] could not be resolved: {e}")
-				os._exit(1)
+			if (type(e) != socket.gaierror) or (e.errno not in [ socket.EAI_AGAIN, socket.EAI_NODATA, socket.EAI_NONAME ]):
+				fail(f"Hostname [{host}] could not be resolved - {e}")
 
 		self.mode = str(get_templated_value(obj, KEY_MODE)).lower()
 		if not (self.mode in MODES):
-			logging.info(f"Mode for host [{self.host}] value [{obj['mode']}] is not valid - must be in {MODES.keys()} (case-insensitive)")
-			os._exit(1)
+			fail(f"Mode for host [{self.host}] value [{obj['mode']}] is not valid - must be in {MODES.keys()} (case-insensitive)")
 
 		initial_delay = int(get_templated_value(obj, KEY_INITIAL_DELAY))
 		if initial_delay < 0:
@@ -281,11 +311,10 @@ class Dependency:
 				try:
 					p = socket.getservbyname(port)
 				except:
-					logging.info(f"Port name [{port}] (from host {self.host}) could not be resolved from /etc/services")
-					os._exit(1)
+					fail(f"Port name [{port}] (from host {self.host}) could not be resolved from /etc/services")
 
 			if (p < 1) or (p > 65535):
-				logging.info(f"Port [{port}] must be between 1 and 65535")
+				fail(f"Port [{port}] must be between 1 and 65535")
 
 			self.ports[p] = DependencyPort(self.host, p, initial_delay, delay, timeout, attempts, self.__port_success, self.__port_failure, self.final_result)
 
@@ -295,11 +324,11 @@ class Dependency:
 				label = "SUCCESS"
 			else:
 				label = "FAILURE"
-			logging.info(f"Dependency [{self.host}] end result: {label}")
+			logging.info(f"📢 Dependency [{self.host}] end result: {label}")
 			for p, f in self.port_futures.items():
 				if f.done:
 					continue
-				logging.info(f"\tCanceling the future for [{self.host}:{p}]")
+				logging.info(f"\t🚫 Canceling the future for [{self.host}:{p}]")
 				try:
 					f.cancel()
 				except:
@@ -316,7 +345,7 @@ class Dependency:
 				host_dependency_failure(self.host)
 
 	def __port_success(self, port):
-		logging.info(f"Successfully probed [{self.host}:{port}]")
+		log_ok(f"Successfully probed [{self.host}:{port}]")
 		remaining = self.active_ports.dec()
 		# If we're just waiting for the first success,
 		# or all have succeeded, then we fire off the
@@ -327,7 +356,7 @@ class Dependency:
 
 	def __port_failure(self, port, exceptions):
 		exceptions = "\n\t".join([str(i) for i in exceptions])
-		logging.info(f"Probes to [{self.host}:{port}] failed:\n\t{exceptions}")
+		log_err(f"Probes to [{self.host}:{port}] failed:\n\t{exceptions}")
 		remaining = self.active_ports.dec()
 		# If we're just waiting for the first failure,
 		# or all have failed, then we fire off the
@@ -342,9 +371,9 @@ class Dependency:
 	def start(self, executor):
 		# Start the pollers for all the internal ports
 		self.active_ports.set(len(self.ports))
-		logging.info(f"\tStarting the probes for [{self.host}] (ports required for success: {self.mode})")
+		logging.info(f"\t👀 Starting the probes for [{self.host}] (ports required for success: {self.mode})")
 		for p, P in self.ports.items():
-			logging.info(f"\t\tStarting the probe for {self.host}:{p}")
+			logging.info(f"\t\t👁️ Starting the probe for {self.host}:{p}")
 			future = executor.submit(P.check)
 			self.port_futures[p] = future
 		return self.port_futures.values()
@@ -354,15 +383,15 @@ def host_dependency_success(name):
 	remaining = total_dependencies.dec()
 	if (host_dependency_mode == MODE_ALL) and (remaining > 0):
 		# We must wait for all remaining dependencies to succeed, so we do nothing
-		logging.info(f"There are still {remaining} unresolved dependencies...")
+		log_warn(f"⚠️ There are still {remaining} unresolved dependencies...")
 		return False
 
 	# We can exit now if this is the last dependency to succeed,
 	# or if we were only waiting for the first dependency to succeed
 	if host_dependency_mode == MODE_ALL:
-		logging.info("All required dependencies have succeeded. Exiting with a success status.")
+		log_ok("All required dependencies have succeeded. Exiting with a success status.")
 	else:
-		logging.info("One dependency has succeeded, and only one was required to succeed. Exiting with a success status")
+		log_ok("One dependency has succeeded, and only one was required to succeed. Exiting with a success status")
 	os._exit(0)
 
 def host_dependency_failure(name):
@@ -370,16 +399,14 @@ def host_dependency_failure(name):
 	remaining = total_dependencies.dec()
 	if (host_dependency_mode == MODE_ANY) and (remaining > 0):
 		# We must wait for all remaining dependencies to fail, so we do nothing
-		logging.info(f"There are still {remaining} unresolved dependencies...")
+		log_warn(f"There are still {remaining} unresolved dependencies...")
 		return False
 
 	# We can exit now if this is the last dependency to fail,
 	# or if we were only waiting for the first dependency to fail
 	if host_dependency_mode == MODE_ALL:
-		logging.info("A dependency has failed, but all were required to succeed. Exiting with an error status")
-	else:
-		logging.info("All required dependencies have failed where at least one was required to succeed. Exiting with an error status")
-	os._exit(1)
+		fail("A dependency has failed, but all were required to succeed. Exiting with an error status")
+	fail("All required dependencies have failed where at least one was required to succeed. Exiting with an error status")
 
 if len(sys.argv) != 2:
 	# If no parameter is given, use an environment variable
@@ -411,21 +438,21 @@ logging.basicConfig(level=logging.DEBUG, format = '%(asctime)s - %(threadName)-1
 show_data = True
 try:
 	if source_file_is_file:
-		logging.info(f"Loading the configuration from the file [{source_file}]...")
+		logging.info(f"💾 Loading the configuration from the file [{source_file}]...")
 		with open(source_file, "r") as f:
 			data = yaml.safe_load(f)
 	else:
 		if type(source_file) == str:
-			logging.info(f"Parsing the configuration from the string: [\n{source_file}\n]...")
+			logging.info(f"🧾 Parsing the configuration from the string: [\n{source_file}\n]...")
 			show_data = False
 		else:
-			logging.info("Parsing the configuration from stdin...")
+			logging.info("⚙️ Parsing the configuration from stdin...")
 		data = yaml.safe_load(source_file)
 	if data is None:
 		raise Exception("Data is not in YAML format")
 except Exception as e:
 	# Yaml parse failed ... try as JSON
-	logging.warning(f"File [{source_file}] was not in YAML format, trying JSON")
+	log_warn(f"File [{source_file}] was not in YAML format, trying JSON")
 	try:
 		with open(source_file, "r") as f:
 			data = json.load(f)
@@ -434,20 +461,20 @@ except Exception as e:
 		sys.exit(1)
 
 if show_data:
-	logging.info(f"Loaded configuration: [{json.dumps(data, indent=4)}]")
+	log_ok(f"Loaded configuration: [{json.dumps(data, indent=4)}]")
 
 host_dependency_mode = str(data.get("mode", DEFAULT_DEPENDENCY_MODE)).lower()
 if not (host_dependency_mode in MODES):
-	logging.info(f"The host dependency mode value [{host_dependency_mode}] is not valid - must be in {MODES.keys()} (case-insensitive)")
+	log_err(f"The host dependency mode value [{host_dependency_mode}] is not valid - must be in {MODES.keys()} (case-insensitive)")
 	sys.exit(1)
 
 try:
 	hosts = data[KEY_DEPENDENCIES]
 except KeyError:
-	logging.info(f"No dependencies found in the configuration file at [{source_file}]")
+	log_ok(f"No dependencies found in the configuration file at [{source_file}]")
 	sys.exit(0)
 
-logging.info(f"Dependency mode: {host_dependency_mode} required")
+logging.info(f"🚨 Dependency mode: {host_dependency_mode} required")
 
 #
 # Make sure the template values are in range
@@ -461,13 +488,13 @@ for k in DEFAULT_TEMPLATE:
 			try:
 				v = t(v)
 			except:
-				logging.error(f"The dependency template value [{k}] of [{v}] can't be cast to type {t}")
+				log_err(f"The dependency template value [{k}] of [{v}] can't be cast to type {t}")
 				sys.exit(1)
 		DEFAULT_TEMPLATE[k] = v
 
 # Sanitize the values
 if not (DEFAULT_TEMPLATE[KEY_MODE] in MODES):
-	println(f"The dependency template mode [{DEFAULT_TEMPLATE[KEY_MODE]}] is not valid - must be in {MODES.keys()} (case-insensitive)")
+	log_err(f"The dependency template mode [{DEFAULT_TEMPLATE[KEY_MODE]}] is not valid - must be in {MODES.keys()} (case-insensitive)")
 	sys.exit(1)
 if DEFAULT_TEMPLATE[KEY_INITIAL_DELAY] < MIN_INITIAL_DELAY:
 	DEFAULT_TEMPLATE[KEY_INITIAL_DELAY] = MIN_INITIAL_DELAY
@@ -478,33 +505,32 @@ if DEFAULT_TEMPLATE[KEY_TIMEOUT] < MIN_TIMEOUT:
 if DEFAULT_TEMPLATE[KEY_ATTEMPTS] < MIN_ATTEMPTS:
 	DEFAULT_TEMPLATE[KEY_ATTEMPTS] = MIN_ATTEMPTS
 
-logging.info(f"Dependency template:\n{json.dumps(DEFAULT_TEMPLATE, indent=4)}")
+logging.info(f"👀 Dependency template:\n{json.dumps(DEFAULT_TEMPLATE, indent=4)}")
 
 total_threads = 0
 dependencies = {}
 for host, obj in hosts.items():
-	logging.info(f"Found a dependency on host [{host}]...")
+	logging.info(f"➡️ Found a dependency on host [{host}]...")
 	dependencies[host] = Dependency(host, obj)
 	threads = dependencies[host].get_port_count()
 	total_threads += threads
-	logging.info(f"'{host}' = {json.dumps(obj, indent=4)}")
+	logging.info(f"👀 '{host}' = {json.dumps(obj, indent=4)}")
 
 total_dependencies = ThreadedCounter(len(hosts))
 try:
-	logging.info(f"Starting the {total_threads} threads (hosts required for success: {host_dependency_mode})...")
+	logging.info(f"🧵 Starting the {total_threads} threads (hosts required for success: {host_dependency_mode})...")
 	with concurrent.futures.ThreadPoolExecutor(max_workers=(total_threads + 1), thread_name_prefix="Probe") as executor:
 		futures = []
 		for h, d in dependencies.items():
 			futures.extend(d.start(executor))
-		logging.info(f"Waiting for the work to conclude ({len(futures)} futures)")
+		logging.info(f"💤 Waiting for the work to conclude ({len(futures)} futures)")
 		for f in futures:
 			try:
 				f.result()
 			except Exception as e:
-				logging.error(traceback.format_exc())
+				log_error(traceback.format_exc())
 				# We don't care...
 				pass
 		sys.exit(0)
 except KeyboardInterrupt:
-	logging.info("INTERRUPTED!")
-	os._exit(1)
+	fail("INTERRUPTED!")

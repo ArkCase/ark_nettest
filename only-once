@@ -2,29 +2,35 @@
 
 set -euo pipefail
 
-timestamp() {
-	/usr/bin/date -u -Isec
+timestamp()
+{
+	date -Ins -u
 }
 
-say() {
+say()
+{
 	echo -e "$(timestamp): ${@}"
 }
 
-err() {
-	say "ERROR: ${@}" 1>&2
+err()
+{
+	say "❌ ${@}" 1>&2
 }
 
-fail() {
-	say "${@}" 1>&2
+fail()
+{
+	err "${@}"
 	exit ${EXIT_CODE:-1}
 }
 
-quit() {
+quit()
+{
 	say "${@}"
 	exit ${EXIT_CODE:-0}
 }
 
-to_boolean() {
+to_boolean()
+{
 	case "${1,,}" in
 		true | t | 1 | yes | on | enabled | enable ) echo "true" ;;
 		* ) echo "false" ;;
@@ -57,15 +63,15 @@ MARKER="${WRAPPED_STATE}/${WRAPPED_STATE_NAME}"
 [ -v SSL_DIR ] || SSL_DIR="/.ssl"
 acme-init
 
-say "Calling the wrapped script"
+say "🚀 Calling the wrapped script"
 (
 	# This should help mitigate exploitation
-	set -- ${WRAPPED_SCRIPT_ARGS}
-	set -x
-	exec "${WRAPPED_SCRIPT}" "${@}"
-) || fail "Failed to initialize the state (rc=${?})"
+	eval CMD=( "${WRAPPED_SCRIPT@Q}" ${WRAPPED_SCRIPT_ARGS} ) || fail "Failed to define the wrapped command using script [${WRAPPED_SCRIPT}] and args [${WRAPPED_SCRIPT_ARGS}]"
+	say "🚀 Launching the wrapped script: ${CMD[@]@Q}"
+	exec "${CMD[@]}"
+) || fail "Failed to execute the wrapped script (rc=${?})"
 
 TS="$(timestamp)"
-say "Wrapped script succeeded, marking the state to [${MARKER}] (timestamp = ${TS})"
+say "✅ Wrapped script succeeded, marking the state to [${MARKER}] (timestamp = ${TS})"
 echo "${TS}" > "${MARKER}" || fail "Failed to create the state tracking marker"
 exit 0
