@@ -10,12 +10,17 @@ import sys
 import threading
 import time
 import traceback
+import urllib
+import urllib.parse
 import yaml
 
 ENV_INIT_DEPENDENCIES = "INIT_DEPENDENCIES"
 
 KEY_MODE = "mode"
-KEY_ALTERNATE = "alternate"
+KEY_URL = "url"
+KEY_HOST = "host"
+KEY_PORT = "port"
+KEY_PORTS = "ports" # Kept for backwards compatibility
 KEY_DEPENDENCIES = "dependencies"
 KEY_TEMPLATE = "template"
 KEY_INITIAL_DELAY = "initialDelay"
@@ -30,7 +35,8 @@ MODES = { MODE_ALL : MODE_ALL, MODE_ANY : MODE_ANY }
 
 DEFAULT_TEMPLATE = {
 	KEY_MODE : MODE_ALL,
-	KEY_ALTERNATE : "",
+	KEY_URL : "",
+	KEY_HOST : "",
 	KEY_INITIAL_DELAY : 0,
 	KEY_DELAY : 5,
 	KEY_TIMEOUT : 15,
@@ -42,6 +48,27 @@ MIN_INITIAL_DELAY = 0
 MIN_DELAY = 1
 MIN_TIMEOUT = 1
 MIN_ATTEMPTS = 1
+
+SCHEME_PORTS = {
+	"ftp" : 21,
+	"ftps" : 990,
+	"gopher" : 70,
+	"http" : 80,
+	"https" : 443,
+	"ldap" : 389,
+	"ldaps" : 636,
+	"imap" : 143,
+	"imaps" : 993,
+	"pop" : 110,
+	"pops" : 995,
+	"smtp" : 25,
+	"smtps" : 465,
+	"ssh" : 22,
+	"sftp" : 22,
+	"telnet" : 23,
+	"nfs" : 2049,
+	"nntp" : 119,
+}
 
 RE_RFC_1123 = re.compile("^([a-z0-9][a-z0-9-]*)?[a-z0-9]([.]([a-z0-9][a-z0-9-]*)?[a-z0-9])*$")
 
@@ -59,33 +86,70 @@ def fail(msg, code = 1):
 	os._exit(code)
 
 def get_templated_value(m, k):
-	return m.get(k, DEFAULT_TEMPLATE.get(k, None))
+	try:
+		v = m[k]
+	except KeyError:
+		try:
+			v = DEFAULT_TEMPLATE[k]
+		except KeyError:
+			v = None
+	return v
 
-def resolve_alternate(alternate):
+def resolve_port_from_scheme(scheme):
+	if (scheme) and (scheme in SCHEME_PORTS):
+		return int(SCHEME_PORTS[scheme])
+	return None
+
+def resolve_dynamic(value, label):
 	# Only apply additional processing if it's a non-empty string
-	if alternate:
-		source = alternate
-		if alternate.startswith("env:"):
+	if value:
+		source = value
+		if value.startswith("@env:"):
 			# If it starts with "env:", it's an envvar value
-			envvar = alternate[4:]
-			logging.info(f"\t🔍 Resolving an alternate hostname from envvar [{envvar}]...")
-			alternate = os.getenv(envvar)
-		elif alternate.startswith("file:"):
+			envvar = value[5:]
+			logging.info(f"\t🔍 Resolving an alternate {label} from envvar [{envvar}]...")
+			try:
+				value = os.environ[envvar]
+			except KeyError:
+				fail(f"An alternate {label} from the environment variable [{envvar}] could not be resolved")
+		elif value.startswith("@file:"):
 			# If it starts with "file:", it's a file path
-			file = alternate[5:]
-			logging.info(f"\t💾 Resolving an alternate hostname from the file [{file}]...")
+			file = value[6:]
+			logging.info(f"\t💾 Resolving an alternate {label} from the file [{file}]...")
 			try:
 				with open(file, "r") as f:
-					alternate = f.read().strip()
+					value = f.read().strip()
 			except Exception as e:
-				alternate = None
-				log_err(f"Alternate hostname from file [{file}] could not be resolved: {e}")
+				fail(f"An alternate {label} from the file [{file}] could not be resolved: {e}")
 		else:
-			# otherwise, assume it's a literal hostname and return it intact...
-			logging.info(f"\t🔁 Using the alternate hostname [{alternate}]...")
+			# otherwise, assume it's a literal value and return it intact...
+			logging.info(f"\t🔁 Using the alternate {label} [{value}]...")
 
-		logging.info(f"\t\t🔦 The alternate hostname from [{source}] was resolved to [{alternate}]")
-	return alternate
+		logging.info(f"\t\t🔦 The alternate {label} from [{source}] was resolved to [{value}]")
+	return value
+
+def resolve_url(url):
+	return resolve_dynamic(url, "URL")
+
+def resolve_host(hostname):
+	return resolve_dynamic(hostname, "hostname")
+
+def resolve_port(host, port):
+	if port is None:
+		return port
+
+	# Always fold to a string, we'll unfold later as needed
+	port = resolve_dynamic(str(port), f"port for host {host}")
+
+	# Ok ... whatever we have is the final value, which can be either a port number or a port name
+	try:
+		return int(port)
+	except ValueError:
+		# Not a number ... is it a port name?
+		try:
+			return socket.getservbyname(port)
+		except:
+			fail(f"Port name [{port}] for host {host} could not be resolved from /etc/services")
 
 class Lock:
 	def __init__(self, rwl, myEnter, myExit):
@@ -251,19 +315,48 @@ class DependencyPort:
 class Dependency:
 	def __init__(self, host, obj):
 		self.host = host
-		alternate_source = str(get_templated_value(obj, KEY_ALTERNATE))
-		if alternate_source:
-			alternate = resolve_alternate(alternate_source)
-			if alternate:
-				# If we got a value, strip it ...
-				alternate = alternate.strip();
 
-				# If the stripped value is empty, this is an error
-				if not alternate:
-					raise Exception(f"The alternate hostname from [{alternate_source}] resolved to an empty value")
+		# It must only have either a host-port combo, or a url, not both
+		port_source = None
+		if (KEY_URL in obj) and ((KEY_HOST in obj) or (KEY_PORT in obj) or (KEY_PORTS in obj)):
+			fail(f"The host declaration for {host} contains both a {KEY_URL} section and a {KEY_HOST}/{KEY_PORT} section - this is not allowed")
 
-				# Use the alternate hostname
-				self.host = alternate
+		if KEY_URL in obj:
+			url_source = str(get_templated_value(obj, KEY_URL))
+			if url_source:
+				new_url = resolve_url(url_source)
+				if new_url:
+					new_url = urllib.parse.urlparse(new_url)
+
+					if not new_url.scheme:
+						fail(f"The URL for {host} lacks a scheme: {url_source}")
+
+					# Capture the hostname from the URL
+					if not new_url.hostname:
+						fail(f"The URL for {host} lacks a host specification: [{url_source}]")
+					self.host = new_url.hostname
+
+					if new_url.port is None:
+						# Deduce the port from the scheme...
+						port_source = resolve_port_from_scheme(new_url.scheme)
+						if not port_source:
+							fail(f"Unsupported URL scheme {new_url.scheme} from the URL for {host}: {url_source}")
+					else:
+						port_source = [ new_url.port ]
+		elif KEY_HOST in obj:
+			host_source = str(get_templated_value(obj, KEY_HOST))
+			if host_source:
+				new_host = resolve_host(host_source)
+				if new_host:
+					# If we got a value, strip it ...
+					new_host = new_host.strip();
+
+					# If the stripped value is empty, this is an error
+					if not new_host:
+						raise Exception(f"The alternate hostname from [{host_source}] resolved to an empty value")
+
+					# Use the alternate hostname
+					self.host = new_host
 
 		# Check to see if the host is a valid, RFC-1123 hostname
 		if not RE_RFC_1123.match(self.host.lower()):
@@ -301,18 +394,24 @@ class Dependency:
 		self.final_result = ThreadedCounter(0)
 		self.ports = {}
 		self.port_futures = {}
-		for port in obj["ports"]:
-			# If port is a string, it must be a service from /etc/services, or it's an error
-			try:
-				# Try to see if it's a port number
-				p = int(port)
-			except ValueError:
-				# It's a port name ... so resolve it as such
-				try:
-					p = socket.getservbyname(port)
-				except:
-					fail(f"Port name [{port}] (from host {self.host}) could not be resolved from /etc/services")
 
+		if not port_source:
+			if (KEY_PORT in obj) and (KEY_PORTS in obj):
+				log_warn(f"Both {KEY_PORT} and {KEY_PORTS} sections are present in the configuration for {host}, the latter will be ignored")
+			try:
+				port_source = obj[KEY_PORT]
+			except KeyError:
+				try:
+					port_source = obj[KEY_PORTS]
+				except KeyError:
+					fail(f"The dependency declaration for host {host} has no port source (no URL, and no {KEY_PORT} section)")
+
+		if type(port_source) != list:
+			port_source = [ port_source ]
+
+		for port in port_source:
+			# If port is a string, it must be a service from /etc/services, or it's an error
+			p = resolve_port(self.host, port)
 			if (p < 1) or (p > 65535):
 				fail(f"Port [{port}] must be between 1 and 65535")
 
