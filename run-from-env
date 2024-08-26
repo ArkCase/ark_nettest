@@ -1,5 +1,8 @@
 #!/bin/bash
 
+set -euo pipefail
+. /.functions
+
 RE_DIGITS="[1-9][0-9]*"
 RE_NUM="^${RE_DIGITS}$"
 RE_ZERO="^(0|${RE_DIGITS})$"
@@ -17,48 +20,11 @@ DEBUG="false"
 RE_DISABLE="${RE_BOOLEAN}"
 RE_DEBUG="${RE_BOOLEAN}"
 
-[ -v TIMEOUT ] || TIMEOUT=""
-[ -n "${TIMEOUT}" ] || TIMEOUT=""
-[[ "${TIMEOUT}" =~ ${RE_ZERO} ]] || TIMEOUT="${DEFAULT_TIMEOUT}"
-
-[ -v RETRY_COUNT ] || RETRY_COUNT=""
-[ -n "${RETRY_COUNT}" ] || RETRY_COUNT=""
+set_or_default TIMEOUT "${DEFAULT_TIMEOUT}"
+set_or_default RETRY_COUNT "${DEFAULT_RETRY_COUNT}"
+set_or_default RETRY_WAIT "${DEFAULT_RETRY_WAIT}"
 [[ "${RETRY_COUNT}" =~ ${RE_RETRY_COUNT} ]] || RETRY_COUNT="${DEFAULT_RETRY_COUNT}"
-
-[ -v RETRY_WAIT ] || RETRY_WAIT=""
-[ -n "${RETRY_WAIT}" ] || RETRY_WAIT=""
 [[ "${RETRY_WAIT}" =~ ${RE_RETRY_WAIT} ]] || RETRY_WAIT="${DEFAULT_RETRY_WAIT}"
-
-timestamp()
-{
-	/usr/bin/date -Ins
-}
-
-say()
-{
-	echo -e "$(timestamp): ${@}"
-}
-
-ok()
-{
-	say "✅ ${@}"
-}
-
-warn()
-{
-	say "⚠️ ${@}"
-}
-
-err()
-{
-	say "❌ ${@}" 1>&2
-}
-
-fail()
-{
-	err "${@}"
-	exit ${EXIT_CODE:-1}
-}
 
 usage()
 {
@@ -101,6 +67,7 @@ for VAR in "${@}" ; do
 	RC=0
 	(
 		set -euo pipefail
+		. /.functions
 
 		#
 		# We can control timeouts, attempts, and even
@@ -129,12 +96,12 @@ for VAR in "${@}" ; do
 		for (( A=1 ; A <= RETRY_COUNT ; A++ )) ; do
 
 			if [ ${A} -gt 1 ] ; then
-				say "⌛ Applying a wait of ${RETRY_WAIT} before the next attempt"
+				waiting "Applying a wait of ${RETRY_WAIT} before the next attempt"
 				/usr/bin/sleep ${RETRY_WAIT} || fail "Retry wait aborted"
 			fi
 
 			ATTEMPT="(${A}/${RETRY_COUNT})"
-			say "👉 Running the check ${ATTEMPT}"
+			doing "Running the check ${ATTEMPT}"
 
 			RC=0
 			say "########################################"
@@ -143,8 +110,8 @@ for VAR in "${@}" ; do
 			[ ${RC} -eq 0 ] && ok "Check succeeded ${ATTEMPT}" && exit 0
 
 			case "${RC}" in
-				124 ) say "⌛ Check timed out ${ATTEMPT}" ;;
-				* )	say "❌ Check failed with status ${RC} ${ATTEMPT}" ;;
+				124 ) waiting "Check timed out ${ATTEMPT}" ;;
+				* )	err "Check failed with status ${RC} ${ATTEMPT}" ;;
 			esac
 		done
 		exit 1
