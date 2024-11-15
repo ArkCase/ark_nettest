@@ -17,8 +17,25 @@ require_file_executable "${WRAPPED_SCRIPT}"
 # filename and add a dot in front to hide the file
 set_or_default WRAPPED_STATE_NAME ".${WRAPPED_SCRIPT##*/}"
 
-MARKER="${WRAPPED_STATE}/${WRAPPED_STATE_NAME}"
-[ -e "${MARKER}" ] && quit "The state has already been initialized"
+set_or_default MARKER_VALUE
+
+# Remove leading and trailing spaces from the marker value
+MARKER_VALUE="$(echo -n "${MARKER_VALUE}" | sed -e 's;^\s*;;g' -e 's;\s*$;;g')"
+
+MARKER_FILE="${WRAPPED_STATE}/${WRAPPED_STATE_NAME}"
+if [ -e "${MARKER_FILE}" ] ; then
+	QUIT="true"
+	if [ -n "${MARKER_VALUE}" ] ; then
+
+		# Is the MARKER_VALUE in the state file?
+		grep -Eqi "\t${MARKER_VALUE}$" "${MARKER_FILE}" || QUIT="false"
+
+		# The marker isn't there... we must run the initialization
+		err "The run marker value [${MARKER_VALUE}] is not present in the state tracker file at [${MARKER_FILE}]"
+	fi
+
+	as_boolean "${QUIT}" && quit "The state has already been initialized"
+fi
 
 init_ssl
 
@@ -30,6 +47,13 @@ running "Calling the wrapped script"
 ) || fail "Failed to execute the wrapped script (rc=${?})"
 
 TS="$(timestamp)"
-ok "Wrapped script succeeded, marking the state to [${MARKER}] (timestamp = ${TS})"
-echo "${TS}" > "${MARKER}" || fail "Failed to create the state tracking marker"
+MARKER_VALUE_MSG=""
+if [ -n "${MARKER_VALUE}" ] ; then
+	MARKER_VALUE_MSG=", with the marker value [${MARKER_VALUE}]"
+
+	# For when it's written out
+	MARKER_VALUE="\t${MARKER_VALUE}"
+fi
+ok "Wrapped script succeeded, marking the state to [${MARKER_FILE}] (timestamp = ${TS}${MARKER_VALUE_MSG})"
+echo -e "${TS}${MARKER_VALUE}" >> "${MARKER_FILE}" || fail "Failed to create the state tracking marker"
 exit 0
