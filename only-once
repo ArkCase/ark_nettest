@@ -17,21 +17,21 @@ require_file_executable "${WRAPPED_SCRIPT}"
 # filename and add a dot in front to hide the file
 set_or_default WRAPPED_STATE_NAME ".${WRAPPED_SCRIPT##*/}"
 
-set_or_default MARKER_VALUE
+set_or_default WRAPPED_SCRIPT_STATE_MARKER
 
 # Remove leading and trailing spaces from the marker value
-MARKER_VALUE="$(echo -n "${MARKER_VALUE}" | sed -e 's;^\s*;;g' -e 's;\s*$;;g')"
+WRAPPED_SCRIPT_STATE_MARKER="$(echo -n "${WRAPPED_SCRIPT_STATE_MARKER}" | sed -e 's;^\s*;;g' -e 's;\s*$;;g')"
 
 MARKER_FILE="${WRAPPED_STATE}/${WRAPPED_STATE_NAME}"
 if [ -e "${MARKER_FILE}" ] ; then
 	QUIT="true"
-	if [ -n "${MARKER_VALUE}" ] ; then
+	if [ -n "${WRAPPED_SCRIPT_STATE_MARKER}" ] ; then
 
-		# Is the MARKER_VALUE in the state file?
-		grep -Eqi "\t${MARKER_VALUE}$" "${MARKER_FILE}" || QUIT="false"
+		# Is the WRAPPED_SCRIPT_STATE_MARKER in the state file?
+		grep -Eqi "\t${WRAPPED_SCRIPT_STATE_MARKER}$" "${MARKER_FILE}" || QUIT="false"
 
 		# The marker isn't there... we must run the initialization
-		err "The run marker value [${MARKER_VALUE}] is not present in the state tracker file at [${MARKER_FILE}]"
+		err "The run marker value [${WRAPPED_SCRIPT_STATE_MARKER}] is not present in the state tracker file at [${MARKER_FILE}]"
 	fi
 
 	as_boolean "${QUIT}" && quit "The state has already been initialized"
@@ -47,13 +47,13 @@ running "Calling the wrapped script"
 ) || fail "Failed to execute the wrapped script (rc=${?})"
 
 TS="$(timestamp)"
-MARKER_VALUE_MSG=""
-if [ -n "${MARKER_VALUE}" ] ; then
-	MARKER_VALUE_MSG=", with the marker value [${MARKER_VALUE}]"
+WRAPPED_SCRIPT_STATE_MARKER_MSG=""
+if [ -n "${WRAPPED_SCRIPT_STATE_MARKER}" ] ; then
+	WRAPPED_SCRIPT_STATE_MARKER_MSG=", with the marker value [${WRAPPED_SCRIPT_STATE_MARKER}]"
 
 	# For when it's written out
-	MARKER_VALUE="\t${MARKER_VALUE}"
+	WRAPPED_SCRIPT_STATE_MARKER="\t${WRAPPED_SCRIPT_STATE_MARKER}"
 fi
-ok "Wrapped script succeeded, marking the state to [${MARKER_FILE}] (timestamp = ${TS}${MARKER_VALUE_MSG})"
-echo -e "${TS}${MARKER_VALUE}" >> "${MARKER_FILE}" || fail "Failed to create the state tracking marker"
+ok "Wrapped script succeeded, marking the state to [${MARKER_FILE}] (timestamp = ${TS}${WRAPPED_SCRIPT_STATE_MARKER_MSG})"
+echo -e "${TS}${WRAPPED_SCRIPT_STATE_MARKER}" >> "${MARKER_FILE}" || fail "Failed to create the state tracking marker"
 exit 0
