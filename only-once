@@ -28,7 +28,7 @@ if [ -e "${MARKER_FILE}" ] ; then
 	if [ -n "${WRAPPED_SCRIPT_STATE_MARKER}" ] ; then
 
 		# Is the WRAPPED_SCRIPT_STATE_MARKER in the state file?
-		grep -Eqi "\t${WRAPPED_SCRIPT_STATE_MARKER}$" "${MARKER_FILE}" || QUIT="false"
+		grep -Eqi "[[:space:]]${WRAPPED_SCRIPT_STATE_MARKER}$" "${MARKER_FILE}" || QUIT="false"
 
 		# The marker isn't there... we must run the initialization
 		err "The run marker value [${WRAPPED_SCRIPT_STATE_MARKER}] is not present in the state tracker file at [${MARKER_FILE}]"
