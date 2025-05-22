@@ -28,6 +28,10 @@ KEY_DELAY = "delay"
 KEY_TIMEOUT = "timeout"
 KEY_ATTEMPTS = "attempts"
 
+RESULT_UNKNOWN = 0
+RESULT_SUCCESS = 1
+RESULT_FAILURE = 2
+
 MODE_ALL = "all"
 MODE_ANY = "any"
 
@@ -248,7 +252,7 @@ class ThreadedCounter:
 			return False
 
 class DependencyPort:
-	def __init__(self, host, port, initial_delay, delay, timeout, attempts, success, failure, final_result):
+	def __init__(self, host, port, initial_delay, delay, timeout, attempts, success, failure, get_final_result):
 		self.host = host
 		self.port = port
 		self.initial_delay = initial_delay
@@ -257,7 +261,7 @@ class DependencyPort:
 		self.attempts = attempts
 		self.success = success
 		self.failure = failure
-		self.final_result = final_result
+		self.get_final_result = get_final_result
 
 	def __is_silent_error(self, e):
 		if e is None:
@@ -269,15 +273,27 @@ class DependencyPort:
 			return True
 		return False
 
-	def check(self):
-		# Apply any initial delay
-		logging.info(f"\t⚡ Launching the prober thread for {self.host}:{self.port}...")
-		if (self.initial_delay > 0):
-			logging.info(f"\t\t⏳ Applying the initial delay of {self.initial_delay}s...")
-			time.sleep(self.initial_delay)
+	def __set_result(self, result, exceptions):
+		if result == RESULT_SUCCESS:
+			self.success(self.port)
+		else:
+			self.failure(self.port, exceptions)
 
+	def check(self):
 		exceptions = []
 		for attempt in range(self.attempts):
+			final_result = self.get_final_result()
+			if final_result != RESULT_UNKNOWN:
+				return (final_result == RESULT_SUCCESS)
+
+			# Only on the first attempt ...
+			if attempt == 1:
+				# Apply any initial delay
+				logging.info(f"\t⚡ Launching the prober thread for {self.host}:{self.port}...")
+				if (self.initial_delay > 0):
+					logging.info(f"\t\t⏳ Applying the initial delay of {self.initial_delay}s...")
+					time.sleep(self.initial_delay)
+
 			caught = None
 			report_caught = False
 			try:
@@ -286,7 +302,7 @@ class DependencyPort:
 				with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 					s.settimeout(self.timeout)
 					s.connect((address, self.port))
-					self.success(self.port)
+					self.__set_result(RESULT_SUCCESS, None)
 					return True
 			except (socket.timeout, TimeoutError, ConnectionError) as e:
 				caught = e
@@ -295,9 +311,9 @@ class DependencyPort:
 				if not self.__is_silent_error(e):
 					report_caught = True
 			finally:
-				final_result = self.final_result.get()
-				if final_result != 0:
-					return (final_result == 1)
+				final_result = self.get_final_result()
+				if final_result != RESULT_UNKNOWN:
+					return (final_result == RESULT_SUCCESS)
 
 				if caught:
 					logging.error(f"\t\t❌ tcptest({self.host}, {self.port}, {self.timeout}) == {caught} (attempt # {attempt + 1} of {self.attempts})")
@@ -309,7 +325,7 @@ class DependencyPort:
 				logging.info(f"\t\t⏳ Applying a delay of {self.delay}s before the next attempt ({attempt + 2}/{self.attempts})...")
 				time.sleep(self.delay)
 
-		self.failure(self.port, exceptions)
+		self.__set_result(RESULT_FAILURE, exceptions)
 		return False
 
 class Dependency:
@@ -391,7 +407,7 @@ class Dependency:
 			attempts = MIN_ATTEMPTS
 
 		self.active_ports = ThreadedCounter(0)
-		self.final_result = ThreadedCounter(0)
+		self.final_result = ThreadedCounter(RESULT_UNKNOWN)
 		self.ports = {}
 		self.port_futures = {}
 
@@ -415,33 +431,41 @@ class Dependency:
 			if (p < 1) or (p > 65535):
 				fail(f"Port [{port}] must be between 1 and 65535")
 
-			self.ports[p] = DependencyPort(self.host, p, initial_delay, delay, timeout, attempts, self.__port_success, self.__port_failure, self.final_result)
+			self.ports[p] = DependencyPort(self.host, p, initial_delay, delay, timeout, attempts, self.__port_success, self.__port_failure, self.__get_final_result)
 
 	def __set_result_and_cancel_futures(self, result):
-		if self.final_result.setIf(0, result):
-			if result == 1:
-				label = "SUCCESS"
-			else:
-				label = "FAILURE"
-			logging.info(f"📢 Dependency [{self.host}] end result: {label}")
-			for p, f in self.port_futures.items():
-				if f.done:
-					continue
-				logging.info(f"\t🚫 Canceling the future for [{self.host}:{p}]")
-				try:
-					f.cancel()
-				except:
-					# We don't care...
-					pass
+		if not self.final_result.setIf(RESULT_UNKNOWN, result):
+			return
 
-			# Clear the remaining counter
-			self.active_ports.set(0)
+		if result == RESULT_SUCCESS:
+			label = "SUCCESS"
+		elif result == RESULT_FAILURE:
+			label = "FAILURE"
+		else:
+			label = f"(unknown == {result})"
 
-			# Signal upwards
-			if result == 1:
-				host_dependency_success(self.host)
-			else:
-				host_dependency_failure(self.host)
+		logging.info(f"📢 Dependency [{self.host}] end result: {label}")
+		for p, f in self.port_futures.items():
+			if f.done:
+				continue
+			logging.info(f"\t🚫 Canceling the future for [{self.host}:{p}]")
+			try:
+				f.cancel()
+			except:
+				# We don't care...
+				pass
+
+		# Clear the remaining counter
+		self.active_ports.set(0)
+
+		# Signal upwards
+		if result == 1:
+			host_dependency_success(self.host)
+		else:
+			host_dependency_failure(self.host)
+
+	def __get_final_result(self):
+		return self.final_result.get()
 
 	def __port_success(self, port):
 		log_ok(f"Successfully probed [{self.host}:{port}]")
@@ -451,7 +475,7 @@ class Dependency:
 		# global dependency success handler, and stop
 		# all other port threads
 		if (self.mode == MODE_ANY) or (remaining <= 0):
-			self.__set_result_and_cancel_futures(1)
+			self.__set_result_and_cancel_futures(RESULT_SUCCESS)
 
 	def __port_failure(self, port, exceptions):
 		exceptions = "\n\t".join([str(i) for i in exceptions])
@@ -462,7 +486,7 @@ class Dependency:
 		# global dependency failure handler, and stop
 		# all other port threads
 		if (self.mode == MODE_ALL) or (remaining <= 0):
-			self.__set_result_and_cancel_futures(2)
+			self.__set_result_and_cancel_futures(RESULT_FAILURE)
 
 	def get_port_count(self):
 		return len(self.ports)
@@ -482,7 +506,7 @@ def host_dependency_success(name):
 	remaining = total_dependencies.dec()
 	if (host_dependency_mode == MODE_ALL) and (remaining > 0):
 		# We must wait for all remaining dependencies to succeed, so we do nothing
-		log_warn(f"⚠️ There are still {remaining} unresolved dependencies...")
+		log_warn(f"There are still {remaining} unresolved dependencies...")
 		return False
 
 	# We can exit now if this is the last dependency to succeed,
@@ -609,11 +633,10 @@ logging.info(f"👀 Dependency template:\n{json.dumps(DEFAULT_TEMPLATE, indent=4
 total_threads = 0
 dependencies = {}
 for host, obj in hosts.items():
-	logging.info(f"➡️ Found a dependency on host [{host}]...")
+	logging.info(f"➡️ Found a dependency on host '{host}' = {json.dumps(obj, indent=4)}")
 	dependencies[host] = Dependency(host, obj)
 	threads = dependencies[host].get_port_count()
 	total_threads += threads
-	logging.info(f"👀 '{host}' = {json.dumps(obj, indent=4)}")
 
 total_dependencies = ThreadedCounter(len(hosts))
 try:
