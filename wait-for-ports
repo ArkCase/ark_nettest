@@ -313,8 +313,6 @@ class DependencyProbe:
 		raise ProbeException(caught, must_report)
 
 	def __probe_url(self):
-		# TODO: Do a URL get, record the HTTP response, succeed on 1XX or 2XX
-		# responses, follow 3XX redirects, and fail on 4XX or 5XX errors
 		caught = None
 		must_report = True
 		req = urllib.request.Request(self.probe_url)
