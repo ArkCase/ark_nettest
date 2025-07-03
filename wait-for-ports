@@ -321,13 +321,13 @@ class DependencyProbe:
 		try:
 			with urllib.request.urlopen(req) as rsp:
 				return True
+		except urllib.error.HTTPError as e:
+			caught = e
+			must_report = (e.code not in [ 502, 503, 504 ])
 		except urllib.error.URLError as e:
 			caught = e
 			if type(e.reason) in [ BrokenPipeError, ConnectionAbortedError, ConnectionError, ConnectionRefusedError, ConnectionResetError, TimeoutError ]:
 				must_report = False
-		except urllib.error.HTTPError as e:
-			caught = e
-			must_report = (e.code not in [ 502, 503, 504 ])
 
 		# Raise the exception
 		raise ProbeException(caught, must_report)
