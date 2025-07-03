@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 import concurrent.futures
 import errno
 import json
@@ -12,12 +12,14 @@ import time
 import traceback
 import urllib
 import urllib.parse
+import urllib.request
 import yaml
 
 ENV_INIT_DEPENDENCIES = "INIT_DEPENDENCIES"
 
 KEY_MODE = "mode"
 KEY_URL = "url"
+KEY_HTTP = "http"
 KEY_HOST = "host"
 KEY_PORT = "port"
 KEY_PORTS = "ports" # Kept for backwards compatibility
@@ -40,6 +42,7 @@ MODES = { MODE_ALL : MODE_ALL, MODE_ANY : MODE_ANY }
 DEFAULT_TEMPLATE = {
 	KEY_MODE : MODE_ALL,
 	KEY_URL : "",
+	KEY_HTTP : "",
 	KEY_HOST : "",
 	KEY_INITIAL_DELAY : 0,
 	KEY_DELAY : 5,
@@ -251,10 +254,16 @@ class ThreadedCounter:
 				return True
 			return False
 
-class DependencyPort:
-	def __init__(self, host, port, initial_delay, delay, timeout, attempts, success, failure, get_final_result):
+class ProbeException(Exception):
+	def __init__(self, cause, must_report):
+		super().__init__()
+		self.cause = cause
+		self.must_report = must_report
+
+class DependencyProbe:
+	def __init__(self, host, probe_url, initial_delay, delay, timeout, attempts, success, failure, get_final_result):
 		self.host = host
-		self.port = port
+		self.probe_url = probe_url
 		self.initial_delay = initial_delay
 		self.delay = delay
 		self.timeout = timeout
@@ -262,6 +271,10 @@ class DependencyPort:
 		self.success = success
 		self.failure = failure
 		self.get_final_result = get_final_result
+		if probe_url.lower().startswith("tcp://"):
+			self.probe = self.__probe_tcp
+		else:
+			self.probe = self.__probe_url
 
 	def __is_silent_error(self, e):
 		if e is None:
@@ -275,9 +288,49 @@ class DependencyPort:
 
 	def __set_result(self, result, exceptions):
 		if result == RESULT_SUCCESS:
-			self.success(self.port)
+			self.success(self.probe_url)
 		else:
-			self.failure(self.port, exceptions)
+			self.failure(self.probe_url, exceptions)
+
+	def __probe_tcp(self):
+		caught = None
+		must_report = False
+		url = urllib.parse.urlparse(self.probe_url)
+		try:
+			address = socket.gethostbyname(url.hostname)
+			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+				s.settimeout(self.timeout)
+				s.connect((address, url.port))
+				self.__set_result(RESULT_SUCCESS, None)
+				return True
+		except (socket.timeout, TimeoutError, ConnectionError) as e:
+			caught = e
+		except Exception as e:
+			caught = e
+			must_report = (not self.__is_silent_error(e))
+
+		# Raise the exception
+		raise ProbeException(caught, must_report)
+
+	def __probe_url(self):
+		# TODO: Do a URL get, record the HTTP response, succeed on 1XX or 2XX
+		# responses, follow 3XX redirects, and fail on 4XX or 5XX errors
+		caught = None
+		must_report = True
+		req = urllib.request.Request(self.probe_url)
+		try:
+			with urllib.request.urlopen(req) as rsp:
+				return True
+		except urllib.error.URLError as e:
+			caught = e
+			if type(e.reason) in [ BrokenPipeError, ConnectionAbortedError, ConnectionError, ConnectionRefusedError, ConnectionResetError, TimeoutError ]:
+				must_report = False
+		except urllib.error.HTTPError as e:
+			caught = e
+			must_report = (e.code not in [ 502, 503, 504 ])
+
+		# Raise the exception
+		raise ProbeException(caught, must_report)
 
 	def check(self):
 		exceptions = []
@@ -289,7 +342,7 @@ class DependencyPort:
 			# Only on the first attempt ...
 			if attempt == 1:
 				# Apply any initial delay
-				logging.info(f"\t⚡ Launching the prober thread for {self.host}:{self.port}...")
+				logging.info(f"\t⚡ Launching the prober thread for {self.probe_url}...")
 				if (self.initial_delay > 0):
 					logging.info(f"\t\t⏳ Applying the initial delay of {self.initial_delay}s...")
 					time.sleep(self.initial_delay)
@@ -297,26 +350,19 @@ class DependencyPort:
 			caught = None
 			report_caught = False
 			try:
-				logging.info(f"\t\t📡 Probing {self.host}:{self.port} ({attempt + 1}/{self.attempts})...")
-				address = socket.gethostbyname(self.host)
-				with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-					s.settimeout(self.timeout)
-					s.connect((address, self.port))
-					self.__set_result(RESULT_SUCCESS, None)
+				logging.info(f"\t\t📡 Probing {self.probe_url} ({attempt + 1}/{self.attempts})...")
+				if self.probe():
 					return True
-			except (socket.timeout, TimeoutError, ConnectionError) as e:
-				caught = e
-			except Exception as e:
-				caught = e
-				if not self.__is_silent_error(e):
-					report_caught = True
+			except ProbeException as e:
+				caught = e.cause
+				report_caught = e.must_report
 			finally:
 				final_result = self.get_final_result()
 				if final_result != RESULT_UNKNOWN:
 					return (final_result == RESULT_SUCCESS)
 
 				if caught:
-					logging.error(f"\t\t❌ tcptest({self.host}, {self.port}, {self.timeout}) == {caught} (attempt # {attempt + 1} of {self.attempts})")
+					logging.error(f"\t\t❌ {self.probe_url} == {caught} (attempt # {attempt + 1} of {self.attempts})")
 					exceptions.append(caught)
 					if report_caught:
 						log_err(traceback.format_exception(None, caught, caught.__traceback__))
@@ -332,47 +378,90 @@ class Dependency:
 	def __init__(self, host, obj):
 		self.host = host
 
-		# It must only have either a host-port combo, or a url, not both
-		port_source = None
-		if (KEY_URL in obj) and ((KEY_HOST in obj) or (KEY_PORT in obj) or (KEY_PORTS in obj)):
-			fail(f"The host declaration for {host} contains both a {KEY_URL} section and a {KEY_HOST}/{KEY_PORT} section - this is not allowed")
+		# It must only have exactly one of a host-port combo, an http value, or a host-url
+		has_url = (KEY_URL in obj)
+		has_host_port = (KEY_HOST in obj) and ((KEY_PORT in obj) or (KEY_PORTS in obj))
+		has_http = (KEY_HTTP in obj)
 
-		if KEY_URL in obj:
-			url_source = str(get_templated_value(obj, KEY_URL))
-			if url_source:
-				new_url = resolve_url(url_source)
-				if new_url:
-					new_url = urllib.parse.urlparse(new_url)
+		sum_result = sum([has_url, has_host_port, has_http])
+		if sum_result > 1:
+			fail(f"The dependency declaration for {host} must contain exactly one of {KEY_URL}, {KEY_HTTP}, or {KEY_HOST} and {KEY_PORT}")
+		elif sum_result == 0:
+			# No entries, so use the key as the hostname
+			has_host_port = True
+			obj[KEY_HOST] = host
+			# We'll catch any missing ports later
 
-					if not new_url.scheme:
-						fail(f"The URL for {host} lacks a scheme: {url_source}")
+		probes = []
 
-					# Capture the hostname from the URL
-					if not new_url.hostname:
-						fail(f"The URL for {host} lacks a host specification: [{url_source}]")
-					self.host = new_url.hostname
+		if has_url or has_http:
+			key = KEY_URL
+			if has_http:
+				key = KEY_HTTP
 
-					if new_url.port is None:
-						# Deduce the port from the scheme...
-						port_source = resolve_port_from_scheme(new_url.scheme)
-						if not port_source:
-							fail(f"Unsupported URL scheme {new_url.scheme} from the URL for {host}: {url_source}")
-					else:
-						port_source = [ new_url.port ]
-		elif KEY_HOST in obj:
-			host_source = str(get_templated_value(obj, KEY_HOST))
-			if host_source:
-				new_host = resolve_host(host_source)
-				if new_host:
-					# If we got a value, strip it ...
-					new_host = new_host.strip();
+			url_source = obj.get(key)
+			if not url_source:
+				fail(f"The {key} probe for {host} contains an empty target")
 
-					# If the stripped value is empty, this is an error
-					if not new_host:
-						raise Exception(f"The alternate hostname from [{host_source}] resolved to an empty value")
+			new_url = resolve_url(str(url_source).strip())
+			if not new_url:
+				fail(f"The {key} probe for {host} with a value of [{url_source}] was resolved to an empty target")
 
-					# Use the alternate hostname
-					self.host = new_host
+			new_url = urllib.parse.urlparse(new_url)
+
+			if not new_url.scheme:
+				fail(f"The {key} probe for {host} lacks a scheme: [{url_source}] -> [{new_url}]")
+
+			# Capture the hostname from the URL
+			if not new_url.hostname:
+				fail(f"The {key} probe for {host} lacks a host specification: [{url_source}] -> [{new_url}]")
+
+			self.host = new_url.hostname
+
+			if has_http:
+				if new_url.scheme.lower() not in [ "http", "https" ]:
+					fail(f"The {key} probe for {host} has an invalid scheme specification of [{url_source}] -> [{new_url}] - must be either http or https")
+				probes.append(new_url.geturl())
+			else:
+				port = new_url.port
+				if port is None:
+					# Deduce the port from the scheme...
+					port = resolve_port_from_scheme(new_url.scheme)
+					if not port:
+						fail(f"The {key} probe for {host} has an unsupported URL scheme {new_url.scheme}: [{url_source}] -> [{new_url}]")
+				probes.append(f"tcp://{new_url.hostname}:{port}")
+
+		if has_host_port:
+			if (KEY_PORT in obj) and (KEY_PORTS in obj):
+				log_warn(f"Both {KEY_PORT} and {KEY_PORTS} sections are present in the configuration for {host}, the former will be ignored")
+
+			try:
+				port_source = obj[KEY_PORTS]
+			except KeyError:
+				try:
+					port_source = obj[KEY_PORT]
+				except KeyError:
+					fail(f"The TCP probe for {host} has neither {KEY_PORT} nor {KEY_PORTS} specifications")
+
+			host_source = obj.get(KEY_HOST)
+			if not host_source:
+				fail(f"The TCP probe for {host} contains an empty target")
+
+			new_host = resolve_host(str(host_source).strip())
+			if not new_host:
+				fail(f"The TCP probe for {host} with a value of [{host_source}] was resolved to an empty target")
+
+			self.host = new_host
+
+			if type(port_source) != list:
+				port_source = [ port_source ]
+
+			for port in port_source:
+				# If port is a string, it must be a service from /etc/services, or it's an error
+				p = resolve_port(self.host, port)
+				if (p < 1) or (p > 65535):
+					fail(f"Port numbers must be between 1 and 65535: [{port}]")
+				probes.append(f"tcp://{new_host}:{p}")
 
 		# Check to see if the host is a valid, RFC-1123 hostname
 		if not RE_RFC_1123.match(self.host.lower()):
@@ -406,32 +495,13 @@ class Dependency:
 		if attempts < MIN_ATTEMPTS:
 			attempts = MIN_ATTEMPTS
 
-		self.active_ports = ThreadedCounter(0)
+		self.active_probes = ThreadedCounter(0)
 		self.final_result = ThreadedCounter(RESULT_UNKNOWN)
-		self.ports = {}
-		self.port_futures = {}
+		self.probes = {}
+		self.probe_futures = {}
 
-		if not port_source:
-			if (KEY_PORT in obj) and (KEY_PORTS in obj):
-				log_warn(f"Both {KEY_PORT} and {KEY_PORTS} sections are present in the configuration for {host}, the latter will be ignored")
-			try:
-				port_source = obj[KEY_PORT]
-			except KeyError:
-				try:
-					port_source = obj[KEY_PORTS]
-				except KeyError:
-					fail(f"The dependency declaration for host {host} has no port source (no URL, and no {KEY_PORT} section)")
-
-		if type(port_source) != list:
-			port_source = [ port_source ]
-
-		for port in port_source:
-			# If port is a string, it must be a service from /etc/services, or it's an error
-			p = resolve_port(self.host, port)
-			if (p < 1) or (p > 65535):
-				fail(f"Port [{port}] must be between 1 and 65535")
-
-			self.ports[p] = DependencyPort(self.host, p, initial_delay, delay, timeout, attempts, self.__port_success, self.__port_failure, self.__get_final_result)
+		for probe_url in probes:
+			self.probes[probe_url] = DependencyProbe(self.host, probe_url, initial_delay, delay, timeout, attempts, self.__probe_success, self.__probe_failure, self.__get_final_result)
 
 	def __set_result_and_cancel_futures(self, result):
 		if not self.final_result.setIf(RESULT_UNKNOWN, result):
@@ -445,10 +515,10 @@ class Dependency:
 			label = f"(unknown == {result})"
 
 		logging.info(f"📢 Dependency [{self.host}] end result: {label}")
-		for p, f in self.port_futures.items():
+		for p, f in self.probe_futures.items():
 			if f.done:
 				continue
-			logging.info(f"\t🚫 Canceling the future for [{self.host}:{p}]")
+			logging.info(f"\t🚫 Canceling the future for the probe {p}")
 			try:
 				f.cancel()
 			except:
@@ -456,7 +526,7 @@ class Dependency:
 				pass
 
 		# Clear the remaining counter
-		self.active_ports.set(0)
+		self.active_probes.set(0)
 
 		# Signal upwards
 		if result == 1:
@@ -467,9 +537,9 @@ class Dependency:
 	def __get_final_result(self):
 		return self.final_result.get()
 
-	def __port_success(self, port):
-		log_ok(f"Successfully probed [{self.host}:{port}]")
-		remaining = self.active_ports.dec()
+	def __probe_success(self, probe_url):
+		log_ok(f"Successfully probed {probe_url}")
+		remaining = self.active_probes.dec()
 		# If we're just waiting for the first success,
 		# or all have succeeded, then we fire off the
 		# global dependency success handler, and stop
@@ -477,29 +547,29 @@ class Dependency:
 		if (self.mode == MODE_ANY) or (remaining <= 0):
 			self.__set_result_and_cancel_futures(RESULT_SUCCESS)
 
-	def __port_failure(self, port, exceptions):
+	def __probe_failure(self, probe_url, exceptions):
 		exceptions = "\n\t".join([str(i) for i in exceptions])
-		log_err(f"Probes to [{self.host}:{port}] failed:\n\t{exceptions}")
-		remaining = self.active_ports.dec()
+		log_err(f"Probes to {probe_url} failed:\n\t{exceptions}")
+		remaining = self.active_probes.dec()
 		# If we're just waiting for the first failure,
 		# or all have failed, then we fire off the
 		# global dependency failure handler, and stop
-		# all other port threads
+		# all other probe threads
 		if (self.mode == MODE_ALL) or (remaining <= 0):
 			self.__set_result_and_cancel_futures(RESULT_FAILURE)
 
-	def get_port_count(self):
-		return len(self.ports)
+	def get_probe_count(self):
+		return len(self.probes)
 
 	def start(self, executor):
-		# Start the pollers for all the internal ports
-		self.active_ports.set(len(self.ports))
+		# Start the pollers for all the probes
+		self.active_probes.set(len(self.probes))
 		logging.info(f"\t👀 Starting the probes for [{self.host}] (ports required for success: {self.mode})")
-		for p, P in self.ports.items():
-			logging.info(f"\t\t👁️ Starting the probe for {self.host}:{p}")
+		for p, P in self.probes.items():
+			logging.info(f"\t\t👁️ Starting the probe for {p}")
 			future = executor.submit(P.check)
-			self.port_futures[p] = future
-		return self.port_futures.values()
+			self.probe_futures[p] = future
+		return self.probe_futures.values()
 
 def host_dependency_success(name):
 	# Subtract one from the global dependency counter
@@ -635,7 +705,7 @@ dependencies = {}
 for host, obj in hosts.items():
 	logging.info(f"➡️ Found a dependency on host '{host}' = {json.dumps(obj, indent=4)}")
 	dependencies[host] = Dependency(host, obj)
-	threads = dependencies[host].get_port_count()
+	threads = dependencies[host].get_probe_count()
 	total_threads += threads
 
 total_dependencies = ThreadedCounter(len(hosts))

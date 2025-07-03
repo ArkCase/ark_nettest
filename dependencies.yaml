@@ -13,14 +13,12 @@ dependencies:
   tvserver:
     # alternate: file:testfile2
     # alternate: "file:/home/diego/workspace/Armedia/Docker/containers/nettest/testfile"
-    alternate: storage.rivera.prv
+    http: https://storage.rivera.prv:44234
     # alternate: env:TEST_VAR
     attempts: 3
     initialDelay: 3
     delay: 1
     mode: "any"
-    ports:
-      - 443
     timeout: 5
 
   localhost:
