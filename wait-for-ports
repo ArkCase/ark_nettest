@@ -130,6 +130,8 @@ def resolve_dynamic(value, label):
 				fail(f"An alternate {label} from the file [{file}] could not be resolved: {e}")
 		else:
 			# otherwise, assume it's a literal value and return it intact...
+			# ... after expanding any environment variables within :)
+			value = os.path.expandvars(value)
 			logging.info(f"\t🔁 Using the alternate {label} [{value}]...")
 
 		logging.info(f"\t\t🔦 The alternate {label} from [{source}] was resolved to [{value}]")
