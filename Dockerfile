@@ -72,7 +72,7 @@ RUN yum -y install epel-release && \
     rm -rf "/aws"
 
 COPY nettest.yaml /
-COPY --chown=root:root only-once wait-for-ports run-from-env /usr/local/bin/
+COPY --chown=root:root only-once wait-for-ports wait-for-dependencies run-from-env /usr/local/bin/
 
 #
 # Final parameters
