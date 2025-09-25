@@ -3,6 +3,7 @@ ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="1.2.10"
 ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+ARG HELM_SRC="https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
 
 ARG BASE_REGISTRY="${PUBLIC_REGISTRY}"
 ARG BASE_REPO="arkcase/base"
@@ -19,6 +20,8 @@ ARG ARCH
 ARG OS
 ARG VER
 ARG AWS_SRC
+ARG HELM_SRC
+ARG HELM_SH="/helm.sh"
 ARG UID="0"
 
 #
@@ -76,6 +79,11 @@ RUN mkdir -p "/aws" && \
     ./aws/install && \
     cd / && \
     rm -rf "/aws"
+
+# Helm
+RUN curl -fsSL -o "${HELM_SH}" "${HELM_SRC}" && \
+    bash "${HELM_SH}" && \
+    rm -rf "${HELM_SH}"
 
 COPY nettest.yaml /
 COPY --chown=root:root only-once wait-for-ports wait-for-dependencies run-from-env /usr/local/bin/
