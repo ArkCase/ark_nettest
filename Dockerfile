@@ -62,8 +62,14 @@ RUN yum -y install epel-release && \
         wget \
     && \
     update-alternatives --set python3 /usr/bin/python3.9 && \
-    yum -y clean all && \
-    mkdir -p "/aws" && \
+    yum -y clean all
+
+#
+# Add the extra tools
+#
+
+# AWS CLI
+RUN mkdir -p "/aws" && \
     curl "${AWS_SRC}" -o "/aws/awscliv2.zip" && \
     cd "/aws" && \
     unzip "awscliv2.zip" && \
