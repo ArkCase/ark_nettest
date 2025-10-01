@@ -1,15 +1,22 @@
 ARG PUBLIC_REGISTRY="public.ecr.aws"
+ARG PRIVATE_REGISTRY
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="1.2.10"
 ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
-ARG HELM_SRC="https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+
+ARG HELM_REGISTRY="${PRIVATE_REGISTRY}"
+ARG HELM_REPO="arkcase/rebuild-helm"
+ARG HELM_TAG="latest"
+ARG HELM_IMG="${HELM_REGISTRY}/${HELM_REPO}:${HELM_TAG}"
 
 ARG BASE_REGISTRY="${PUBLIC_REGISTRY}"
 ARG BASE_REPO="arkcase/base"
 ARG BASE_VER="8"
 ARG BASE_VER_PFX=""
 ARG BASE_IMG="${BASE_REGISTRY}/${BASE_REPO}:${BASE_VER_PFX}${BASE_VER}"
+
+FROM "${HELM_IMG}" AS helm
 
 FROM "${BASE_IMG}"
 
@@ -20,8 +27,6 @@ ARG ARCH
 ARG OS
 ARG VER
 ARG AWS_SRC
-ARG HELM_SRC
-ARG HELM_SH="/helm.sh"
 ARG UID="0"
 
 #
@@ -81,12 +86,10 @@ RUN mkdir -p "/aws" && \
     rm -rf "/aws"
 
 # Helm
-RUN curl -fsSL -o "${HELM_SH}" "${HELM_SRC}" && \
-    bash "${HELM_SH}" && \
-    rm -rf "${HELM_SH}"
+COPY --chown=root:root --chmod=0755 --from=helm /helm /usr/local/bin/
 
 COPY nettest.yaml /
-COPY --chown=root:root only-once wait-for-ports wait-for-dependencies run-from-env /usr/local/bin/
+COPY --chown=root:root --chmod=0755 only-once wait-for-ports wait-for-dependencies run-from-env /usr/local/bin/
 
 #
 # Final parameters
