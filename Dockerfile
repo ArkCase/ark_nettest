@@ -69,6 +69,7 @@ RUN apt-get update && \
 #
 
 # AWS CLI
+ENV AWS_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
 RUN mkdir -p "/aws" && \
     curl "${AWS_SRC}" -o "/aws/awscliv2.zip" && \
     cd "/aws" && \
