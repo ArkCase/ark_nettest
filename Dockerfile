@@ -1,7 +1,7 @@
 ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.2.10"
+ARG VER="1.2.11"
 ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 ARG HELM_SRC="https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
 
@@ -72,6 +72,7 @@ RUN yum -y install epel-release && \
 #
 
 # AWS CLI
+ENV AWS_CA_BUNDLE="/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 RUN mkdir -p "/aws" && \
     curl "${AWS_SRC}" -o "/aws/awscliv2.zip" && \
     cd "/aws" && \
