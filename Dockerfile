@@ -52,7 +52,7 @@ RUN apt-get update && \
         kubectl \
         ldap-utils \
         less \
-        netcat \
+        netcat-openbsd \
         net-tools \
         nmap \
         openssh-client \
