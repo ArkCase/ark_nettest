@@ -1,3 +1,4 @@
+ARG FIPS=""
 ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG ARCH="amd64"
 ARG OS="linux"
@@ -10,7 +11,7 @@ ARG BASE_REGISTRY="${PUBLIC_REGISTRY}"
 ARG BASE_REPO="arkcase/base"
 ARG BASE_VER="24.04"
 ARG BASE_VER_PFX=""
-ARG BASE_IMG="${BASE_REGISTRY}/${BASE_REPO}:${BASE_VER_PFX}${BASE_VER}"
+ARG BASE_IMG="${BASE_REGISTRY}/${BASE_REPO}${FIPS}:${BASE_VER_PFX}${BASE_VER}"
 
 FROM "${BASE_IMG}"
 
@@ -69,7 +70,7 @@ RUN apt-get update && \
 #
 
 # AWS CLI
-ENV AWS_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+ENV AWS_CA_BUNDLE="${CA_TRUSTS_PEM}"
 RUN mkdir -p "/aws" && \
     curl "${AWS_SRC}" -o "/aws/awscliv2.zip" && \
     cd "/aws" && \
