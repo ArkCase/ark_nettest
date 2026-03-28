@@ -78,8 +78,7 @@ RUN mkdir -p "/aws" && \
     ./aws/install && \
     cd / && \
     rm -rf "/aws" && \
-    COMPLETER="$(type -P aws_completer)" && \
-    echo "complete -C '${COMPLETER}' aws" > /etc/profile.d/02-aws.sh
+    echo "complete -C '/usr/local/bin/aws_completer' aws" > /etc/profile.d/02-aws.sh
 
 # Helm
 RUN curl -fsSL -o "${HELM_SH}" "${HELM_SRC}" && \
