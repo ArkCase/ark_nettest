@@ -62,7 +62,8 @@ RUN apt-get update && \
         telnet \
         vim \
       && \
-    apt-get clean
+    apt-get clean && \
+    kubectl completion bash > /usr/share/bash-completion/completions/kubectl
 
 #
 # Add the extra tools
@@ -76,12 +77,15 @@ RUN mkdir -p "/aws" && \
     unzip "awscliv2.zip" && \
     ./aws/install && \
     cd / && \
-    rm -rf "/aws"
+    rm -rf "/aws" && \
+    COMPLETER="$(type -P aws_completer)" && \
+    echo "complete -C '${COMPLETER}' aws" > /etc/profile.d/02-aws.sh
 
 # Helm
 RUN curl -fsSL -o "${HELM_SH}" "${HELM_SRC}" && \
     bash "${HELM_SH}" && \
-    rm -rf "${HELM_SH}"
+    rm -rf "${HELM_SH}" && \
+    helm completion bash > /usr/share/bash-completion/completions/helm
 
 COPY nettest-security.yaml /
 COPY --chown=root:root --chmod=0755 entrypoint /
