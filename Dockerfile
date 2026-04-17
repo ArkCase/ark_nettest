@@ -82,7 +82,7 @@ RUN mkdir -p "/aws" && \
     echo "complete -C '/usr/local/bin/aws_completer' aws" > /etc/profile.d/02-aws.sh
 
 # Helm
-RUN curl -fsSL -o "${HELM_SRC}" | bash && \
+RUN curl -fsSL "${HELM_SRC}" | bash && \
     helm completion bash > /usr/share/bash-completion/completions/helm
 
 COPY nettest-security.yaml /
