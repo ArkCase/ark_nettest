@@ -24,7 +24,7 @@ ARG AWS_SRC
 ARG HELM_SRC
 ARG HELM_SH="/helm.sh"
 ARG K8S_VER
-ARG UID="0"
+ARG APP_UID="0"
 
 #
 # Some important labels
@@ -81,9 +81,7 @@ RUN mkdir -p "/aws" && \
     echo "complete -C '/usr/local/bin/aws_completer' aws" > /etc/profile.d/02-aws.sh
 
 # Helm
-RUN curl -fsSL -o "${HELM_SH}" "${HELM_SRC}" && \
-    bash "${HELM_SH}" && \
-    rm -rf "${HELM_SH}" && \
+RUN curl -fsSL -o "${HELM_SRC}" | bash && \
     helm completion bash > /usr/share/bash-completion/completions/helm
 
 COPY nettest-security.yaml /
@@ -94,5 +92,5 @@ COPY --chown=root:root --chmod=0755 scripts/* /usr/local/bin/
 # Final parameters
 #
 WORKDIR     /
-USER        "${UID}"
+USER        "${APP_UID}"
 ENTRYPOINT  [ "/entrypoint" ]
