@@ -2,11 +2,11 @@
 
 set -euo pipefail
 . /.functions
+define_base_vars
 
-define_base_vars "${0}"
-
-if is_file_executable "/usr/local/bin/acme-init" ; then
-	init_ssl
-fi
+#
+# Init all the SSL-related stuff
+#
+init_ssl
 
 execute "${__BASEDIR}/wait-for-ports" "${@}"

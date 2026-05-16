@@ -37,6 +37,9 @@ if [ -e "${MARKER_FILE}" ] ; then
 	as_boolean "${QUIT}" && quit "The state has already been initialized"
 fi
 
+#
+# Init all the SSL-related stuff
+#
 init_ssl
 
 running "Calling the wrapped script"
