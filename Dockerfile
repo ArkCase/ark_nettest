@@ -3,15 +3,23 @@ ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="2.0.0"
-ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
-ARG HELM_SRC="https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
 ARG K8S_VER="1.34"
+
+ARG CG_REG="cgr.dev"
+ARG CG_HELM_REPO="armedia.com/helm"
+# Don't go to Helm 4 yet ... need to test it!
+ARG CG_HELM_VER="3"
+ARG CG_HELM_IMG="${CG_REG}/${CG_HELM_REPO}${FIPS}:${CG_HELM_VER}"
 
 ARG BASE_REGISTRY="${PUBLIC_REGISTRY}"
 ARG BASE_REPO="arkcase/base"
 ARG BASE_VER="24.04"
 ARG BASE_VER_PFX=""
 ARG BASE_IMG="${BASE_REGISTRY}/${BASE_REPO}${FIPS}:${BASE_VER_PFX}${BASE_VER}"
+
+FROM "${CG_HELM_IMG}" AS helm-src
+
+ARG BASE_IMG
 
 FROM "${BASE_IMG}"
 
@@ -21,9 +29,7 @@ FROM "${BASE_IMG}"
 ARG ARCH
 ARG OS
 ARG VER
-ARG AWS_SRC
-ARG HELM_SRC
-ARG HELM_SH="/helm.sh"
+ARG AWS_SRC="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 ARG K8S_VER
 ARG APP_UID="0"
 
@@ -82,8 +88,8 @@ RUN mkdir -p "/aws" && \
     echo "complete -C '/usr/local/bin/aws_completer' aws" > /etc/profile.d/02-aws.sh
 
 # Helm
-RUN curl -fsSL "${HELM_SRC}" | bash && \
-    helm completion bash > /usr/share/bash-completion/completions/helm
+COPY --chown=root:root --chmod=0775 --from=helm-src /usr/bin/helm /usr/local/bin/
+RUN helm completion bash > /usr/share/bash-completion/completions/helm
 
 COPY nettest-security.yaml /
 COPY --chown=root:root --chmod=0755 entrypoint /
