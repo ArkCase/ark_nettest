@@ -66,7 +66,6 @@ RUN apt-get update && \
         python3-requests \
         screen \
         tcpdump \
-        telnet \
         vim \
       && \
     apt-get clean && \
