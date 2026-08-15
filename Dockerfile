@@ -1,15 +1,10 @@
 ARG FIPS=""
 ARG PUBLIC_REGISTRY="public.ecr.aws"
+ARG PRIVATE_REGISTRY
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="2.0.0"
 ARG K8S_VER="1.34"
-
-ARG CG_REG="cgr.dev"
-ARG CG_HELM_REPO="armedia.com/helm"
-# Don't go to Helm 4 yet ... need to test it!
-ARG CG_HELM_VER="3"
-ARG CG_HELM_IMG="${CG_REG}/${CG_HELM_REPO}${FIPS}:${CG_HELM_VER}"
 
 ARG BASE_REGISTRY="${PUBLIC_REGISTRY}"
 ARG BASE_REPO="arkcase/base"
@@ -17,7 +12,12 @@ ARG BASE_VER="24.04"
 ARG BASE_VER_PFX=""
 ARG BASE_IMG="${BASE_REGISTRY}/${BASE_REPO}${FIPS}:${BASE_VER_PFX}${BASE_VER}"
 
-FROM "${CG_HELM_IMG}" AS helm-src
+ARG HELM_REG="${PRIVATE_REGISTRY}"
+ARG HELM_REPO="arkcase/rebuild-helm"
+ARG HELM_VER="3"
+ARG HELM_IMG="${HELM_REG}/${HELM_REPO}${FIPS}:${BASE_VER_PFX}${HELM_VER}"
+
+FROM "${HELM_IMG}" AS helm-src
 
 ARG BASE_IMG
 
@@ -87,7 +87,7 @@ RUN mkdir -p "/aws" && \
     echo "complete -C '/usr/local/bin/aws_completer' aws" > /etc/profile.d/02-aws.sh
 
 # Helm
-COPY --chown=root:root --chmod=0775 --from=helm-src /usr/bin/helm /usr/local/bin/
+COPY --chown=root:root --chmod=0775 --from=helm-src /helm /usr/local/bin/
 RUN helm completion bash > /usr/share/bash-completion/completions/helm
 
 COPY nettest-security.yaml /
