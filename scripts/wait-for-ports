@@ -613,17 +613,8 @@ else:
 	else:
 		source_file_is_file = True
 
-class TaskNameFilter(logging.Filter):
-	# Outside of a task (i.e. during startup), show the thread name instead
-	def filter(self, record):
-		if not getattr(record, "taskName", None):
-			record.taskName = record.threadName
-		return True
-
 # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logging.basicConfig(level=logging.DEBUG, format = '%(asctime)s - %(levelname)s - %(message)s')
-for handler in logging.getLogger().handlers:
-	handler.addFilter(TaskNameFilter())
 
 # First try to load as a YAML file ... if that fails, try with JSON ...
 
