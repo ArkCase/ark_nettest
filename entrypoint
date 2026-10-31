@@ -3,5 +3,5 @@
 set -euo pipefail
 . /.functions
 
-[ ${#} -gt 0 ] && set -- "wait-forever"
+[ ${#} -gt 0 ] || set -- "wait-forever"
 execute "${@}"

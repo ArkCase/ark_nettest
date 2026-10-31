@@ -276,7 +276,8 @@ async def http_get(url):
 	# Same as urlopen(): follow redirects, and anything other than a 2xx is an HTTPError
 	visited = {}
 	while True:
-		code, reason, headers = await http_request(urllib.parse.urlparse(url))
+		# Not urlparse(): that would split off any path parameters (i.e. /path;v=1)
+		code, reason, headers = await http_request(urllib.parse.urlsplit(url))
 		if 200 <= code < 300:
 			return True
 
@@ -619,6 +620,7 @@ logging.basicConfig(level=logging.DEBUG, format = '%(asctime)s - %(levelname)s -
 # First try to load as a YAML file ... if that fails, try with JSON ...
 
 show_data = True
+source_text = None
 try:
 	if source_file_is_file:
 		logging.info(f"💾 Loading the configuration from the file [{source_file}]...")
@@ -628,17 +630,22 @@ try:
 		if type(source_file) == str:
 			logging.info(f"🧾 Parsing the configuration from the string: [\n{source_file}\n]...")
 			show_data = False
+			source_text = source_file
 		else:
 			logging.info("⚙️ Parsing the configuration from stdin...")
-		data = yaml.safe_load(source_file)
+			source_text = source_file.read()
+		data = yaml.safe_load(source_text)
 	if data is None:
 		raise Exception("Data is not in YAML format")
 except Exception as e:
 	# Yaml parse failed ... try as JSON
 	log_warn(f"File [{source_file}] was not in YAML format, trying JSON")
 	try:
-		with open(source_file, "r") as f:
-			data = json.load(f)
+		if source_text is None:
+			with open(source_file, "r") as f:
+				data = json.load(f)
+		else:
+			data = json.loads(source_text)
 	except Exception as e:
 		logging.error(e)
 		sys.exit(1)
@@ -665,7 +672,7 @@ logging.info(f"🚨 Dependency mode: {host_dependency_mode} required")
 #
 # Make sure the template values are in range
 #
-dependency_template = data.get(KEY_TEMPLATE, {})
+dependency_template = data.get(KEY_TEMPLATE) or {}
 for k in DEFAULT_TEMPLATE:
 	if k in dependency_template:
 		v = dependency_template[k]

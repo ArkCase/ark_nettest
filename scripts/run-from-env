@@ -15,8 +15,10 @@ RE_RETRY_COUNT="${RE_NUM}"
 DEFAULT_RETRY_WAIT="5"
 RE_RETRY_WAIT="${RE_NUM}"
 
-DISABLE="false"
-DEBUG="false"
+DEFAULT_DISABLE="false"
+DEFAULT_DEBUG="false"
+DISABLE="${DEFAULT_DISABLE}"
+DEBUG="${DEFAULT_DEBUG}"
 RE_DISABLE="${RE_BOOLEAN}"
 RE_DEBUG="${RE_BOOLEAN}"
 
@@ -110,7 +112,8 @@ for VAR in "${@}" ; do
 			[ ${RC} -eq 0 ] && ok "Check succeeded ${ATTEMPT}" && exit 0
 
 			case "${RC}" in
-				124 ) waiting "Check timed out ${ATTEMPT}" ;;
+				# With --signal=KILL, a timeout is reported as 137 instead of 124
+				124 | 137 ) waiting "Check timed out or was killed ${ATTEMPT}" ;;
 				* )	err "Check failed with status ${RC} ${ATTEMPT}" ;;
 			esac
 		done

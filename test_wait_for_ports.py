@@ -139,6 +139,13 @@ def plain_http_only(c):
 	c.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 	c.close()
 
+def path_params_only(c):
+	# Only answers 200 if the path parameters and the query arrive intact
+	head = read_head(c)
+	status = "200 OK" if head.startswith("GET /health;v=1?x=2 ") else "404 Not Found"
+	c.sendall(f"HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode())
+	c.close()
+
 class Watcher(Server):
 	# Records, for each connection, how long the client kept it open after it
 	# got what it needed: the accept (TCP) or the response (HTTP). The server
@@ -192,6 +199,7 @@ NOT_FOUND = Server(responder("404 Not Found")).port
 REDIRECT = Server(responder("302 Found", f"Location: http://localhost:{OK}/landing\r\n")).port
 REDIRECT_TO_404 = Server(responder("302 Found", f"Location: http://localhost:{NOT_FOUND}/landing\r\n")).port
 RELATIVE_REDIRECT = Server(relative_redirect).port
+PATH_PARAMS = Server(path_params_only).port
 REDIRECT_LOOP = Server(responder("302 Found", "Location: /again\r\n")).port
 NOT_MODIFIED = Server(responder("304 Not Modified")).port
 UNAVAILABLE = Server(responder("503 Service Unavailable")).port
@@ -254,6 +262,11 @@ TESTS = {
 		rc = 1,
 		max_time = 15,
 		check = lambda: SILENT_SERVER.expect_connections(2),
+	),
+	"http-path-params-are-sent": dict(
+		config = f"dependencies:\n  localhost:\n    http: http://localhost:{PATH_PARAMS}/health;v=1?x=2\n    attempts: 1\n",
+		compare = True,
+		rc = 0,
 	),
 	"http-redirect-is-followed": dict(
 		config = f"dependencies:\n  localhost:\n    http: http://localhost:{REDIRECT}\n    attempts: 1\n",
@@ -411,6 +424,21 @@ TESTS = {
 		rc = 0,
 		check = lambda: ENVVAR_PORT_TARGET.expect_connections(1),
 	),
+	# Tabs aren't valid YAML indentation, so these can only be parsed as JSON
+	"tab-indented-json-from-stdin": dict(
+		config = f'{{\n\t"dependencies": {{\n\t\t"localhost": {{\n\t\t\t"port": {OK}\n\t\t}}\n\t}}\n}}\n',
+		via = "stdin",
+		rc = 0,
+	),
+	"tab-indented-json-from-env": dict(
+		config = f'{{\n\t"dependencies": {{\n\t\t"localhost": {{\n\t\t\t"port": {OK}\n\t\t}}\n\t}}\n}}\n',
+		via = "env",
+		rc = 0,
+	),
+	"empty-template-section": dict(
+		config = f"template:\ndependencies:\n  localhost:\n    port: {OK}\n",
+		rc = 0,
+	),
 	"no-dependencies": dict(
 		config = "mode: all\n",
 		rc = 0,
@@ -503,7 +531,7 @@ def run_test(script, name, t):
 	return problems, out
 
 def main():
-	script = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "wait-for-ports"))
+	script = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "scripts", "wait-for-ports"))
 	selected = sys.argv[2:] or list(TESTS)
 	failed = 0
 	for name in selected:
