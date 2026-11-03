@@ -42,19 +42,22 @@ LABEL APP="Network Tester"
 LABEL VERSION="${VER}"
 LABEL IMAGE_SOURCE="https://github.com/ArkCase/ark_nettest"
 
+ENV AWS_CA_BUNDLE="${CA_TRUSTS_PEM}"
+
 #
 # Full update
 #
-RUN export K8S_KEY="/etc/apt/trusted.gpg.d/kubernetes.gpg" && \
+RUN --mount=type=bind,target=/src \
+    --mount=type=bind,from=helm-src,target=/helm \
+    export K8S_KEY="/etc/apt/trusted.gpg.d/kubernetes.gpg" && \
     export K8S_LIST="/etc/apt/sources.list.d/kubernetes.list" && \
     curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VER}/deb/Release.key" | \
         gpg --dearmor -o "${K8S_KEY}" && \
     chmod 644 "${K8S_KEY}" && \
     echo "deb [signed-by=${K8S_KEY}] https://pkgs.k8s.io/core:/stable:/v${K8S_VER}/deb/ /" | \
     tee "${K8S_LIST}" && \
-    chmod 644 "${K8S_LIST}"
-
-RUN apt-get update && \
+    chmod 644 "${K8S_LIST}" && \
+    apt-get update && \
     apt-get -y install \
         kubectl \
         ldap-utils \
@@ -69,34 +72,23 @@ RUN apt-get update && \
         vim \
       && \
     apt-get clean && \
-    kubectl completion bash > /usr/share/bash-completion/completions/kubectl
-
-#
-# Add the extra tools
-#
-
-# AWS CLI
-ENV AWS_CA_BUNDLE="${CA_TRUSTS_PEM}"
-RUN mkdir -p "/aws" && \
+    kubectl completion bash > /usr/share/bash-completion/completions/kubectl && \
+    mkdir -p "/aws" && \
     curl "${AWS_SRC}" -o "/aws/awscliv2.zip" && \
     cd "/aws" && \
     unzip "awscliv2.zip" && \
     ./aws/install && \
     cd / && \
     rm -rf "/aws" && \
-    echo "complete -C '/usr/local/bin/aws_completer' aws" > /etc/profile.d/02-aws.sh
-
-# Helm
-COPY --chown=root:root --chmod=0775 --from=helm-src /helm /usr/local/bin/
-RUN helm completion bash > /usr/share/bash-completion/completions/helm
-
-COPY nettest-security.yaml /
-COPY --chown=root:root --chmod=0755 entrypoint /
-COPY --chown=root:root --chmod=0755 scripts/* /usr/local/bin/
+    echo "complete -C '/usr/local/bin/aws_completer' aws" > /etc/profile.d/02-aws.sh && \
+    install -o root -g root -m 0755 /helm/helm /usr/local/bin && \
+    helm completion bash > /usr/share/bash-completion/completions/helm && \
+    install -o root -g root -m 0444 /src/nettest-security.yaml / && \
+    install -o root -g root -m 0755 /src/entrypoint /usr/local/bin && \
+    ( tar --owner=root --group=root --mode=u=rwX,go=rX -cf - /src/scripts ) | tar --strip-components=2 -C "/usr/local/bin" -xvf -
 
 #
 # Final parameters
 #
 WORKDIR     /
 USER        "${APP_UID}"
-ENTRYPOINT  [ "/entrypoint" ]
