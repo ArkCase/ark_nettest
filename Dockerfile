@@ -72,6 +72,7 @@ RUN --mount=type=bind,target=/src \
         vim \
       && \
     apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
     kubectl completion bash > /usr/share/bash-completion/completions/kubectl && \
     mkdir -p "/aws" && \
     curl "${AWS_SRC}" -o "/aws/awscliv2.zip" && \
