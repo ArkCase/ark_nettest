@@ -86,7 +86,7 @@ RUN --mount=type=bind,target=/src \
     helm completion bash > /usr/share/bash-completion/completions/helm && \
     install -o root -g root -m 0444 /src/nettest-security.yaml / && \
     install -o root -g root -m 0755 /src/entrypoint /usr/local/bin && \
-    ( tar --owner=root --group=root --mode=u=rwX,go=rX -cf - /src/scripts ) | tar --strip-components=2 -C "/usr/local/bin" -xvf -
+    copy-tree -v -o root -g root -m u=rwX,go=rX /src/scripts/ /usr/local/bin
 
 #
 # Final parameters
